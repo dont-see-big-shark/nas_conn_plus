@@ -4,26 +4,35 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
+	"time"
 )
 
 type Server struct {
-	path     string
-	ln       net.Listener
-	provider func() StatusReport
-	stop     chan struct{}
-	wg       sync.WaitGroup
+	path      string
+	ln        net.Listener
+	provider  func() StatusReport
+	stop      chan struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 }
 
-// StartServer creates and serves a Unix domain socket for IPC status queries
+// StartServer creates and serves a Unix domain socket with strict 0600 permissions
 func StartServer(socketPath string, provider func() StatusReport) (*Server, error) {
 	_ = os.Remove(socketPath)
+
+	dir := filepath.Dir(socketPath)
+	if dir != "." && dir != "" {
+		_ = os.MkdirAll(dir, 0o755)
+	}
 
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return nil, err
 	}
-	_ = os.Chmod(socketPath, 0o666)
+	// Restrict permissions to owner-only to prevent unauthorized IPC queries
+	_ = os.Chmod(socketPath, 0o600)
 
 	s := &Server{
 		path:     socketPath,
@@ -48,8 +57,13 @@ func (s *Server) serve() {
 			case <-s.stop:
 				return
 			default:
-				return
 			}
+
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				time.Sleep(50 * time.Millisecond)
+				continue
+			}
+			return
 		}
 
 		go s.handle(conn)
@@ -59,15 +73,19 @@ func (s *Server) serve() {
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
 
+	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
 	report := s.provider()
 	_ = json.NewEncoder(conn).Encode(report)
 }
 
-// Close gracefully stops the server and cleans up the socket file
+// Close gracefully stops the server and cleans up the socket file (idempotent)
 func (s *Server) Close() error {
-	close(s.stop)
-	err := s.ln.Close()
-	_ = os.Remove(s.path)
-	s.wg.Wait()
+	var err error
+	s.closeOnce.Do(func() {
+		close(s.stop)
+		err = s.ln.Close()
+		_ = os.Remove(s.path)
+		s.wg.Wait()
+	})
 	return err
 }

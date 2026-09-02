@@ -1,6 +1,7 @@
 package ipc
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -59,5 +60,68 @@ func TestIPC_QueryAndRender(t *testing.T) {
 	}
 	if !strings.Contains(output, "1h") {
 		t.Errorf("expected output to contain uptime, got:\n%s", output)
+	}
+}
+
+func TestIPC_SanitizeString(t *testing.T) {
+	evil := "\x1b[31;1mDanger\x1b[0m\x00\x07\tTab"
+	cleaned := sanitizeString(evil)
+
+	if strings.Contains(cleaned, "\x1b") {
+		t.Errorf("ANSI escape sequences were not stripped: %q", cleaned)
+	}
+	if strings.Contains(cleaned, "\x00") || strings.Contains(cleaned, "\x07") {
+		t.Errorf("Control characters were not stripped: %q", cleaned)
+	}
+}
+
+func TestIPC_SocketPermissions(t *testing.T) {
+	tempDir := t.TempDir()
+	sockPath := filepath.Join(tempDir, "perm.sock")
+
+	srv, err := StartServer(sockPath, func() StatusReport {
+		return StatusReport{Version: "test"}
+	})
+	if err != nil {
+		t.Fatalf("start server: %v", err)
+	}
+	defer srv.Close()
+
+	fi, err := os.Stat(sockPath)
+	if err != nil {
+		t.Fatalf("stat socket: %v", err)
+	}
+
+	// Perm should be 0600 (owner read/write only)
+	perm := fi.Mode().Perm()
+	if perm != 0o600 {
+		t.Errorf("Expected socket permissions 0600, got %04o (M2 regression)", perm)
+	}
+}
+
+func TestIPC_CloseIdempotent(t *testing.T) {
+	tempDir := t.TempDir()
+	sockPath := filepath.Join(tempDir, "idempotent.sock")
+
+	srv, err := StartServer(sockPath, func() StatusReport {
+		return StatusReport{}
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	// Multiple calls to Close should not panic
+	if err := srv.Close(); err != nil {
+		t.Errorf("first close: %v", err)
+	}
+	if err := srv.Close(); err != nil {
+		t.Errorf("second close: %v", err)
+	}
+}
+
+func TestIPC_DefaultSocketPath(t *testing.T) {
+	p := DefaultSocketPath()
+	if p == "" {
+		t.Error("expected non-empty socket path")
 	}
 }

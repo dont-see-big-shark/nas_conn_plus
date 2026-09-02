@@ -10,13 +10,32 @@ User=root
 ExecStart=/usr/local/bin/nasconnplus -c /etc/nasconnplus/config.json
 Restart=always
 RestartSec=5s
+StartLimitIntervalSec=60s
+StartLimitBurst=5
 
 # Resource and limit configurations
-LimitNOFILE=65535
-LimitNPROC=65535
+LimitNOFILE=16384
+LimitNPROC=16384
+TasksMax=1024
 
-# Ambient capabilities for binding ports
-AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
+# Security sandbox
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/nasconnplus /run /tmp
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+
+# Ambient capabilities for binding low ports and inspecting socket inodes
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_SYS_PTRACE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SYS_PTRACE
 
 [Install]
 WantedBy=multi-user.target

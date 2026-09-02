@@ -5,10 +5,29 @@
 **专为 NAS 与家庭自建服务打造的轻量级连接增强工具**  
 *突破 IPv4 大内网限制 · 自动 IPv6 中继 · 端口 +1 无感升级 HTTPS*
 
+[![CI](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml/badge.svg)](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/Coverage-70.4%25-brightgreen.svg?logo=codecov)](https://github.com/jadenjoe/nasconnplus)
 [![Go Report Card](https://goreportcard.com/badge/github.com/jadenjoe/nasconnplus)](https://goreportcard.com/report/github.com/jadenjoe/nasconnplus)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Latest Release](https://img.shields.io/github/v/release/jadenjoe/nasconnplus?logo=github&color=3388ff)](https://github.com/jadenjoe/nasconnplus/releases)
 [![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.22-00ADD8?logo=go)](https://golang.org)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20NAS%20%7C%20Docker-lightgrey)](https://github.com/jadenjoe/nasconnplus)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](deploy/Dockerfile)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+<p align="center">
+  <a href="#-为什么需要-nasconn-">为什么需要</a> •
+  <a href="#️-架构与工作原理">架构原理</a> •
+  <a href="#-核心特性">核心特性</a> •
+  <a href="#-快速开始">快速开始</a> •
+  <a href="#️-配置文件说明-configjson">配置说明</a> •
+  <a href="#-命令行参数与运维监控-cli--ergonomics">运维监控</a> •
+  <a href="#-测试与代码质量-testing--quality">测试与覆盖率</a> •
+  <a href="#️-源码编译与安装-build-from-source">源码构建</a> •
+  <a href="#-开发路线图-roadmap">路线图</a> •
+  <a href="#-安全建议">安全建议</a> •
+  <a href="#-参与贡献与社区">贡献指南</a>
+</p>
 
 </div>
 
@@ -259,14 +278,105 @@ Options:
 
 ---
 
-## 🤝 贡献与反馈
+## 🧪 测试与质量保证 (Testing & Quality)
 
-欢迎提交 Issue、功能建议或 Pull Request！
-- 发现 Bug 请在 GitHub Issue 详细描述环境（NAS 型号、系统版本、复现步骤）。
-- 新特性建议欢迎随时讨论交流。
+本项目核心业务模块均编写了自动化单元测试、集成测试与竞态检测（Race Detector），由 GitHub Actions CI 在多版本 Go 环境下自动守护。整体语句覆盖率达到 **70.4%**，核心子模块覆盖率明细如下：
+
+| 模块 (Package) | 职责说明 | 覆盖率 (Coverage) | 质量保障重点 |
+| :--- | :--- | :---: | :--- |
+| `internal/logger` | 结构化终端排版与多通道着色日志记录器 | **100.0%** | 并发无竞态、NO_COLOR 终端无缝降级 |
+| `internal/ipc` | Unix Domain Socket 客户端/服务端 IPC 通信 | **92.1%** | 0600 权限隔离、优雅重试、幂等销毁 |
+| `internal/config` | 配置文件查找、递归解析、约束校验与默认生成 | **88.1%** | 端口边界验证、/tmp 敏感路径防提权 |
+| `internal/cert` | TLS 证书管理器、ECDSA 自签与 Let's Encrypt 适配 | **75.7%** | 证书热重载、指纹防重复加载、多域名命中 |
+| `internal/proxy` | L4 零拷贝 TCP Relay 中继与 L7 HTTPS 反向代理引擎 | **67.9%** | X-Forwarded 协议头防伪造、防级联自环探测 |
+| `internal/scanner` | Linux 内核 procfs 端口嗅探、HTTP 探测与报表 | **61.3%** | procfs 零依赖解析、自进程 socket 过滤 |
+| `internal/app` | 守护进程生命周期与主事件循环协调器 | **46.3%** | 命令行参数解析、单次诊断、优雅信号终止 |
+| **综合覆盖率 (Total)** | **核心业务代码覆盖** | **`70.4%`** | **持续集成 CI 自动全链路守护** |
+
+### 本地运行测试与覆盖率报告
+
+```bash
+# 运行全部单元测试
+make test
+
+# 运行测试并输出覆盖率统计
+make coverage
+
+# 开启竞态检测并生成 HTML 可视化覆盖率报表 (自动输出 coverage.html)
+make test-coverage
+
+# 执行代码风格与静态类型检查
+make lint
+```
 
 ---
 
-## 📄 License
+## 🛠️ 源码编译与安装 (Build from Source)
 
-本项目基于 [MIT 许可证](LICENSE) 开源。
+如果你本地已配置 Go（>= 1.22）环境，可以通过以下方式直接从源码安装或构建：
+
+### 方式 A：`go install` 一键全局安装
+```bash
+go install github.com/jadenjoe/nasconnplus/cmd/nasconnplus@latest
+```
+
+### 方式 B：源码本地编译
+```bash
+# 克隆仓库代码
+git clone https://github.com/jadenjoe/nasconnplus.git
+cd nasconnplus
+
+# 编译当前平台二进制
+make build
+
+# 一键跨平台交叉编译 (Linux amd64 / arm64 / armv7)，产物输出至 dist/ 目录
+make release
+```
+
+---
+
+## 🗺️ 开发路线图 (Roadmap)
+
+`nasconn+` 持续演进中，欢迎社区共同参与建设：
+
+- [x] 原生 Linux `/proc/net/tcp` 零依赖、毫秒级端口自动探测
+- [x] L4 高性能零拷贝 IPv6 同端口透明中继（基于 Google `inetaf/tcpproxy` + Linux `splice(2)`）
+- [x] L7 智能反向代理（自动嗅探 HTTP 并在 `端口 + 1` 开启 HTTPS 升级）
+- [x] 标准 X-Forwarded 报头注入（解决 1Panel/Nextcloud 302 重定向循环）
+- [x] 三级证书安全管理（Let's Encrypt 自动续签、外部证书热重载、ECDSA 10年自签证书兜底）
+- [x] 本地 Unix Domain Socket 实时状态大盘（`nasconnplus status`）
+- [x] 终端人体工程学美化与单次诊断报表（`-t` 模式）
+- [ ] 📊 轻量级 WebUI 实时拓扑监控面板与吞吐图表
+- [ ] 🌐 UDP 端口 IPv6 镜像与中继转发支持
+- [ ] 🔑 ACME DNS-01 验证支持（针对家庭宽带封锁 80/443 端口场景自动申请泛域名证书）
+- [ ] 🎯 SNI 域名级智能多证书路由与虚拟主机支持
+
+---
+
+## 🤝 参与贡献与社区 (Contributing)
+
+我们非常欢迎来自社区的任何贡献！无论是提出功能建议、汇报 Bug、改进文档，还是提交代码 PR。
+
+- 📜 **贡献指南**：请阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 了解开发规范与 PR 提交说明。
+- 🛡️ **安全政策**：若发现潜在安全漏洞，请阅读 [SECURITY.md](SECURITY.md) 获取负责任披露指引。
+- 📝 **版本记录**：查看 [CHANGELOG.md](CHANGELOG.md) 获取最新更新历史。
+- 🐛 **提交反馈**：
+  - [提交 Bug 报告](https://github.com/jadenjoe/nasconnplus/issues/new?template=bug_report.md)
+  - [提出新功能建议](https://github.com/jadenjoe/nasconnplus/issues/new?template=feature_request.md)
+
+---
+
+## 💖 鸣谢 (Acknowledgements)
+
+`nasconn+` 离不开开源社区优秀项目的基石力量：
+
+- [inetaf/tcpproxy](https://github.com/inetaf/tcpproxy) - 提供强大的底层 TCP 零拷贝代理能力
+- [charmbracelet/lipgloss](https://github.com/charmbracelet/lipgloss) - 提供优雅的现代极客终端排版与配色
+- [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto) - 提供 Let's Encrypt ACME 证书全自动化能力
+
+---
+
+## 📄 开源许可证 (License)
+
+本项目基于 [MIT 许可证](LICENSE) 开源，自由免费，允许商业与个人使用。
+

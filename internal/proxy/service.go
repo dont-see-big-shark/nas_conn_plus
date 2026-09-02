@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/inetaf/tcpproxy"
@@ -111,15 +113,78 @@ func (s *Service) GetMetricsSnapshot() []ListenerMetrics {
 	return res
 }
 
+func (s *Service) isExcluded(port int) bool {
+	for _, p := range s.cfg.Relay.Exclude {
+		if p == port {
+			return true
+		}
+	}
+	for _, p := range s.cfg.HTTPSExclude {
+		if p == port {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) isOurListenerPortLocked(port int) bool {
+	for _, st := range s.listeners {
+		if st.port == port && !st.conflict {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) isOurListener(kind string, port int) bool {
+	st, exists := s.listeners[key(kind, port)]
+	return exists && !st.conflict
+}
+
 // Reconcile synchronizes active listeners with the current scan result
 func (s *Service) Reconcile(res *scanner.Result) {
+	// Pre-pass: run HTTP probes outside s.mu lock to avoid blocking IPC queries or other workers
+	var portsToProbe []int
+	if s.cfg.HTTPSAuto != nil && *s.cfg.HTTPSAuto {
+		s.mu.Lock()
+		activeCandidatePorts := make(map[int]bool)
+		for port := range res.V4Wild {
+			if !s.isOurListenerPortLocked(port) && !s.isExcluded(port) {
+				activeCandidatePorts[port] = true
+			}
+		}
+		for port := range res.V6Any {
+			if !s.isOurListenerPortLocked(port) && !s.isExcluded(port) {
+				activeCandidatePorts[port] = true
+			}
+		}
+		s.mu.Unlock()
+
+		scanner.CleanProbeCache(activeCandidatePorts)
+		for port := range activeCandidatePorts {
+			portsToProbe = append(portsToProbe, port)
+		}
+	}
+
+	if len(portsToProbe) > 0 {
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 8)
+		for _, p := range portsToProbe {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(port int) {
+				defer func() {
+					<-sem
+					wg.Done()
+				}()
+				_ = scanner.ProbeHTTP(port)
+			}(p)
+		}
+		wg.Wait()
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	excludeRelay := make(map[int]bool)
-	for _, p := range s.cfg.Relay.Exclude {
-		excludeRelay[p] = true
-	}
 
 	// 1. Build desired listeners
 	wants := make(map[string]want)
@@ -141,44 +206,48 @@ func (s *Service) Reconcile(res *scanner.Result) {
 
 	// 2. Automatic Zero-Config HTTP Discovery & +1 HTTPS Upgrade
 	if s.cfg.HTTPSAuto != nil && *s.cfg.HTTPSAuto {
-		excludeHTTPS := make(map[int]bool)
-		for _, p := range s.cfg.HTTPSExclude {
-			excludeHTTPS[p] = true
-		}
-
 		allActivePorts := make(map[int]bool)
 		for port := range res.V4Wild {
-			allActivePorts[port] = true
+			// CRITICAL: Never treat our own listener ports as new HTTP targets to upgrade!
+			if !s.isOurListenerPortLocked(port) && !s.isExcluded(port) {
+				allActivePorts[port] = true
+			}
 		}
 		for port := range res.V6Any {
-			allActivePorts[port] = true
+			// CRITICAL: Never treat our own listener ports as new HTTP targets to upgrade!
+			if !s.isOurListenerPortLocked(port) && !s.isExcluded(port) {
+				allActivePorts[port] = true
+			}
 		}
 
-		// Prune cache for closed ports
-		scanner.CleanProbeCache(allActivePorts)
-
 		for port := range allActivePorts {
-			if explicitBackends[port] || excludeHTTPS[port] {
+			if explicitBackends[port] {
 				continue
 			}
 
 			targetPort := port + s.cfg.HTTPSOffset
-			if targetPort > 65535 || excludeHTTPS[targetPort] {
+			if targetPort > 65535 || s.isExcluded(targetPort) {
 				continue
 			}
 
-			// Don't conflict if targetPort is already natively occupied by another process
-			if (res.V4Wild[targetPort] || res.V6Any[targetPort]) && !s.isOurListener(targetPort) {
+			// Don't conflict if targetPort is occupied by another process (or a different listener kind)
+			if (res.V4Wild[targetPort] || res.V6Any[targetPort]) && !s.isOurListener("https", targetPort) {
 				continue
 			}
 
-			// Active probing: check if port speaks HTTP
+			wKey := key("https", targetPort)
+			// Explicit rules take precedence
+			if _, exists := wants[wKey]; exists {
+				continue
+			}
+
+			// Active probing: check if port speaks plain HTTP (cached from pre-pass)
 			if scanner.ProbeHTTP(port) {
 				name := res.Names[port]
 				if name == "" {
 					name = fmt.Sprintf("http-%d", port)
 				}
-				wants[key("https", targetPort)] = want{
+				wants[wKey] = want{
 					kind:    "https",
 					name:    fmt.Sprintf("%s-tls", name),
 					port:    targetPort,
@@ -192,7 +261,11 @@ func (s *Service) Reconcile(res *scanner.Result) {
 	// 3. Relay: auto-mirror v4-only ports to IPv6
 	if s.cfg.Relay.Auto {
 		for port := range res.V4Wild {
-			if excludeRelay[port] || res.V6Others[port] {
+			if s.isExcluded(port) || res.V6Others[port] {
+				continue
+			}
+			// Do not relay our own listener ports
+			if s.isOurListenerPortLocked(port) {
 				continue
 			}
 			wants[key("relay", port)] = want{
@@ -284,25 +357,26 @@ func (s *Service) Reconcile(res *scanner.Result) {
 
 func (s *Service) startHTTPServer(st *listenerState, w want) {
 	targetURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", w.backend))
-	rp := httputil.NewSingleHostReverseProxy(targetURL)
-
-	// Inject custom buffer pool and optimized transport
-	rp.BufferPool = s.bufferPool
-	rp.Transport = s.transport
-
-	originalDirector := rp.Director
-	rp.Director = func(req *http.Request) {
-		originalDirector(req)
-		req.Header.Set("X-Forwarded-Proto", "https")
-		req.Header.Set("X-Forwarded-Port", strconv.Itoa(w.port))
-		req.Header.Set("X-Forwarded-Host", req.Host)
-		if clientIP, _, err := net.SplitHostPort(req.RemoteAddr); err == nil {
-			req.Header.Set("X-Real-IP", clientIP)
-		}
-	}
-
-	rp.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
-		rw.WriteHeader(http.StatusBadGateway)
+	rp := &httputil.ReverseProxy{
+		BufferPool: s.bufferPool,
+		Transport:  s.transport,
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(targetURL)
+			pr.Out.Host = pr.In.Host
+			pr.SetXForwarded()
+			pr.Out.Header.Set("X-Forwarded-Proto", "https")
+			pr.Out.Header.Set("X-Forwarded-Port", strconv.Itoa(w.port))
+			pr.Out.Header.Set("X-Forwarded-Host", pr.In.Host)
+			if clientIP, _, err := net.SplitHostPort(pr.In.RemoteAddr); err == nil {
+				pr.Out.Header.Set("X-Real-IP", clientIP)
+			} else {
+				pr.Out.Header.Del("X-Real-IP")
+			}
+		},
+		ErrorHandler: func(rw http.ResponseWriter, req *http.Request, err error) {
+			s.log.Warn("HTTPS %s proxy error: %v", w.name, err)
+			rw.WriteHeader(http.StatusBadGateway)
+		},
 	}
 
 	// Wrapper handler to track lock-free metrics (active connections, total, traffic)
@@ -319,9 +393,11 @@ func (s *Service) startHTTPServer(st *listenerState, w want) {
 	})
 
 	server := &http.Server{
-		Handler:     wrappedHandler,
-		TLSConfig:   s.tlsCfg,
-		IdleTimeout: time.Duration(s.cfg.IdleSeconds) * time.Second,
+		Handler:           wrappedHandler,
+		TLSConfig:         s.tlsCfg,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       time.Duration(s.cfg.IdleSeconds) * time.Second,
+		MaxHeaderBytes:    64 << 10,
 	}
 	st.httpServer = server
 
@@ -336,6 +412,20 @@ func (s *Service) acceptRelayLoop(st *listenerState) {
 	dialProxy := tcpproxy.To(fmt.Sprintf("127.0.0.1:%d", st.backend))
 	dialProxy.DialTimeout = 10 * time.Second
 	dialProxy.KeepAlivePeriod = 30 * time.Second
+
+	var lastErrTime time.Time
+	var errCount int
+	dialProxy.OnDialError = func(src net.Conn, err error) {
+		now := time.Now()
+		if now.Sub(lastErrTime) > 5*time.Second {
+			s.log.Warn("relay %s dial error: %v (suppressed %d occurrences)", st.name, err, errCount)
+			lastErrTime = now
+			errCount = 0
+		} else {
+			errCount++
+		}
+		_ = src.Close()
+	}
 
 	var tempDelay time.Duration
 	for {
@@ -379,13 +469,18 @@ func (s *Service) acceptRelayLoop(st *listenerState) {
 	}
 }
 
-// countingConn tracks bytes in/out and active connection count for TCP connections
+// countingConn tracks bytes in/out and implements net.Conn, UnderlyingConn, and TCP extension interfaces
+// to enable Linux kernel splice(2) zero-copy and keepalive in tcpproxy.
 type countingConn struct {
 	net.Conn
 	active *atomic.Int64
 	in     *atomic.Uint64
 	out    *atomic.Uint64
 	closed atomic.Bool
+}
+
+func (c *countingConn) UnderlyingConn() net.Conn {
+	return c.Conn
 }
 
 func (c *countingConn) Read(b []byte) (n int, err error) {
@@ -409,6 +504,41 @@ func (c *countingConn) Close() error {
 		c.active.Add(-1)
 	}
 	return c.Conn.Close()
+}
+
+func (c *countingConn) CloseRead() error {
+	if cr, ok := c.Conn.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return nil
+}
+
+func (c *countingConn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return nil
+}
+
+func (c *countingConn) SetKeepAlive(keepalive bool) error {
+	if ka, ok := c.Conn.(interface{ SetKeepAlive(bool) error }); ok {
+		return ka.SetKeepAlive(keepalive)
+	}
+	return nil
+}
+
+func (c *countingConn) SetKeepAlivePeriod(d time.Duration) error {
+	if kap, ok := c.Conn.(interface{ SetKeepAlivePeriod(time.Duration) error }); ok {
+		return kap.SetKeepAlivePeriod(d)
+	}
+	return nil
+}
+
+func (c *countingConn) SyscallConn() (syscall.RawConn, error) {
+	if sc, ok := c.Conn.(syscall.Conn); ok {
+		return sc.SyscallConn()
+	}
+	return nil, errors.New("underlying conn does not implement syscall.Conn")
 }
 
 type countingResponseWriter struct {
@@ -466,21 +596,20 @@ func (s *Service) addr(st *listenerState) string {
 	return s.addrOf(st.kind, st.port)
 }
 
-func (s *Service) isOurListener(port int) bool {
-	for _, st := range s.listeners {
-		if st.port == port && !st.conflict {
-			return true
-		}
-	}
-	return false
-}
-
-// Shutdown gracefully stops all active listeners
+// Shutdown gracefully stops all active listeners concurrently
 func (s *Service) Shutdown() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	var wg sync.WaitGroup
 	for _, st := range s.listeners {
-		s.stopListener(st)
+		wg.Add(1)
+		go func(l *listenerState) {
+			defer wg.Done()
+			s.stopListener(l)
+		}(st)
 	}
+	wg.Wait()
+	s.listeners = make(map[string]*listenerState)
+	s.missing = make(map[string]int)
 }

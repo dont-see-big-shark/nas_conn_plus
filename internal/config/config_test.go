@@ -92,3 +92,58 @@ func TestLoadConfig_MinimalStreamlined(t *testing.T) {
 	}
 }
 
+func TestResolveConfigPath(t *testing.T) {
+	// 1. Specified path explicitly
+	specified := "/custom/path/config.json"
+	if got := ResolveConfigPath(specified); got != specified {
+		t.Errorf("expected %s, got %s", specified, got)
+	}
+
+	// 2. Empty specified path
+	got := ResolveConfigPath("")
+	if got == "" {
+		t.Error("expected non-empty resolved path")
+	}
+}
+
+func TestLoadConfig_ErrorsAndValidation(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Malformed JSON
+	badJSONFile := filepath.Join(tempDir, "bad.json")
+	_ = os.WriteFile(badJSONFile, []byte("{broken json..."), 0o644)
+	if _, err := LoadConfig(badJSONFile); err == nil {
+		t.Error("expected error for malformed json")
+	}
+
+	// Invalid relay exclude
+	badExcludeFile := filepath.Join(tempDir, "bad_exclude.json")
+	_ = os.WriteFile(badExcludeFile, []byte(`{"relay": {"exclude": [99999]}}`), 0o644)
+	if _, err := LoadConfig(badExcludeFile); err == nil {
+		t.Error("expected error for exclude port > 65535")
+	}
+
+	// Duplicate HTTPS ports
+	dupFile := filepath.Join(tempDir, "dup_https.json")
+	_ = os.WriteFile(dupFile, []byte(`{
+		"https": [
+			{"name": "app1", "http": 8080, "https": 8443},
+			{"name": "app2", "http": 8081, "https": 8443}
+		]
+	}`), 0o644)
+	if _, err := LoadConfig(dupFile); err == nil {
+		t.Error("expected error for duplicate https port")
+	}
+
+	// Invalid HTTP port bounds
+	invalidPortFile := filepath.Join(tempDir, "invalid_port.json")
+	_ = os.WriteFile(invalidPortFile, []byte(`{
+		"https": [
+			{"name": "app1", "http": 0, "https": 8443}
+		]
+	}`), 0o644)
+	if _, err := LoadConfig(invalidPortFile); err == nil {
+		t.Error("expected error for port 0")
+	}
+}
+

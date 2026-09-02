@@ -3,7 +3,7 @@ VERSION ?= 1.0.0
 BUILD_DATE := $(shell date -u +'%Y-%m-%d')
 LDFLAGS := -s -w -X 'github.com/jadenjoe/nasconnplus/internal/app.Version=$(VERSION)' -X 'github.com/jadenjoe/nasconnplus/internal/app.BuildDate=$(BUILD_DATE)'
 
-.PHONY: all build clean test run docker-build release
+.PHONY: all build clean test coverage test-coverage vet lint run docker-build release
 
 all: build
 
@@ -15,9 +15,25 @@ test:
 	@echo "Running tests..."
 	go test -v ./...
 
+coverage:
+	@echo "Running tests with coverage..."
+	go test -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
+
+test-coverage:
+	@echo "Running tests with coverage and race detector..."
+	go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+	go tool cover -func=coverage.out
+	@echo "Generating HTML coverage report to coverage.html..."
+	go tool cover -html=coverage.out -o coverage.html
+
+
 vet:
 	@echo "Running go vet..."
 	go vet ./...
+
+lint: vet
+	@echo "Code verification passed."
 
 clean:
 	@echo "Cleaning binaries..."

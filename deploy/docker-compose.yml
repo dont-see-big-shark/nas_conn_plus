@@ -7,10 +7,16 @@ services:
     container_name: nasconnplus
     restart: unless-stopped
     # IMPORTANT: nasconnplus must use host networking and host pid namespace
-    # to scan host listening ports (ss -tlnp) and bind IPv6/HTTPS listeners directly.
+    # to scan host listening ports directly and bind IPv6/HTTPS listeners.
     network_mode: host
     pid: host
-    privileged: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - SYS_PTRACE
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - ./config.json:/etc/nasconnplus/config.json
       - ./tls:/etc/nasconnplus/tls

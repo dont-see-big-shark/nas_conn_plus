@@ -3,6 +3,7 @@ package ipc
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -38,20 +39,36 @@ var (
 			Bold(true)
 )
 
-// QueryStatus queries the running daemon through the Unix domain socket
+// QueryStatus queries the running daemon through the Unix domain socket with timeout and size bounds
 func QueryStatus(socketPath string) (*StatusReport, error) {
-	conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)
+	conn, err := net.DialTimeout("unix", socketPath, 3*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("connect to nasconnplus daemon at %s: %w (is the service running?)", socketPath, err)
 	}
 	defer conn.Close()
 
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	// Limit response reading to 1MB to protect against malformed or unbounded responses
+	limitReader := io.LimitReader(conn, 1<<20)
+
 	var report StatusReport
-	if err := json.NewDecoder(conn).Decode(&report); err != nil {
+	if err := json.NewDecoder(limitReader).Decode(&report); err != nil {
 		return nil, fmt.Errorf("decode daemon response: %w", err)
 	}
 
 	return &report, nil
+}
+
+// sanitizeString removes ANSI escape codes and ASCII control characters to prevent terminal injection
+func sanitizeString(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= 32 && r != 127 {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // RenderStatus formats the status report into an ergonomic Lipgloss dashboard table
@@ -90,8 +107,10 @@ func RenderStatus(report *StatusReport) string {
 		trafficStr := fmt.Sprintf("↓ %s / ↑ %s", formatBytes(l.BytesIn), formatBytes(l.BytesOut))
 		uptimeStr := formatDuration(now.Sub(l.StartedAt))
 
+		cleanName := sanitizeString(l.Name)
+
 		rows = append(rows, []string{
-			l.Name,
+			cleanName,
 			typeStr,
 			listenStr,
 			fmt.Sprintf("127.0.0.1:%d", l.Backend),

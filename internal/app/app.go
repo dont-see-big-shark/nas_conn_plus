@@ -43,6 +43,9 @@ func Run() {
 	// Ergonomic subcommand support: `nasconnplus status`
 	if len(os.Args) > 1 && os.Args[1] == "status" {
 		*statusFlag = true
+		if len(os.Args) > 2 {
+			_ = flag.CommandLine.Parse(os.Args[2:])
+		}
 	} else {
 		flag.Parse()
 	}
@@ -56,7 +59,7 @@ func Run() {
 
 	// Status query mode: connects to running daemon via IPC Unix socket
 	if *statusFlag {
-		report, err := ipc.QueryStatus(ipc.DefaultSocketPath)
+		report, err := ipc.QueryStatus(ipc.DefaultSocketPath())
 		if err != nil {
 			log.Warn("%v", err)
 			os.Exit(1)
@@ -74,7 +77,27 @@ func Run() {
 			log.Warn("Diagnostic scan failed: %v", err)
 			os.Exit(1)
 		}
-		fmt.Println("\n" + res.DiagnosticReport(nil))
+
+		// Read exclusions from active config if available
+		var excludes []int
+		resolvedPath := config.ResolveConfigPath(*configPathFlag)
+		if cfg, err := config.LoadConfig(resolvedPath); err == nil {
+			seen := make(map[int]bool)
+			for _, p := range cfg.Relay.Exclude {
+				if !seen[p] {
+					seen[p] = true
+					excludes = append(excludes, p)
+				}
+			}
+			for _, p := range cfg.HTTPSExclude {
+				if !seen[p] {
+					seen[p] = true
+					excludes = append(excludes, p)
+				}
+			}
+		}
+
+		fmt.Println("\n" + res.DiagnosticReport(excludes))
 		return
 	}
 
@@ -117,7 +140,7 @@ func Run() {
 	startTime := time.Now()
 
 	// Start IPC Status Server for `nasconnplus status` CLI ergonomics
-	ipcServer, err := ipc.StartServer(ipc.DefaultSocketPath, func() ipc.StatusReport {
+	ipcServer, err := ipc.StartServer(ipc.DefaultSocketPath(), func() ipc.StatusReport {
 		return ipc.StatusReport{
 			Version:       Version,
 			UptimeSeconds: int64(time.Since(startTime).Seconds()),

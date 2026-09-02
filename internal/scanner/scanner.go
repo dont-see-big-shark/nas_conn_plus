@@ -94,35 +94,61 @@ var (
 	cachedInodes = make(map[string]procInfo)
 )
 
-func scanProcFS() (*Result, error) {
-	mypid := os.Getpid()
-
-	res := &Result{
+func newResult() *Result {
+	return &Result{
 		V4Wild:   make(map[int]bool),
 		V6Any:    make(map[int]bool),
 		V6Others: make(map[int]bool),
 		PIDs:     make(map[int]int),
 		Names:    make(map[int]string),
 	}
+}
+
+func getSelfSocketInodes() map[string]bool {
+	inodes := make(map[string]bool)
+	fdDir := "/proc/self/fd"
+	fds, err := os.ReadDir(fdDir)
+	if err != nil {
+		return inodes
+	}
+	for _, fd := range fds {
+		target, err := os.Readlink(filepath.Join(fdDir, fd.Name()))
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(target, "socket:[") && strings.HasSuffix(target, "]") {
+			inode := target[8 : len(target)-1]
+			inodes[inode] = true
+		}
+	}
+	return inodes
+}
+
+func scanProcFS() (*Result, error) {
+	mypid := os.Getpid()
+	selfInodes := getSelfSocketInodes()
+
+	res := newResult()
 
 	// First pass using cached inodes
 	missingInodes := false
 	inodeMap := getCachedInodes()
 
-	if err := parseProcNetFile("/proc/net/tcp", false, res, mypid, inodeMap, &missingInodes); err != nil {
+	if err := parseProcNetFile("/proc/net/tcp", false, res, mypid, selfInodes, inodeMap, &missingInodes); err != nil {
 		return nil, err
 	}
-	if err := parseProcNetFile("/proc/net/tcp6", true, res, mypid, inodeMap, &missingInodes); err != nil {
+	if err := parseProcNetFile("/proc/net/tcp6", true, res, mypid, selfInodes, inodeMap, &missingInodes); err != nil {
 		return nil, err
 	}
 
-	// If new sockets appeared that weren't in our cache, refresh cache and re-populate
+	// If new sockets appeared that weren't in our cache, refresh cache and re-populate with a clean Result
 	if missingInodes {
 		inodeMap = refreshInodeCache()
-		if err := parseProcNetFile("/proc/net/tcp", false, res, mypid, inodeMap, nil); err != nil {
+		res = newResult()
+		if err := parseProcNetFile("/proc/net/tcp", false, res, mypid, selfInodes, inodeMap, nil); err != nil {
 			return nil, err
 		}
-		if err := parseProcNetFile("/proc/net/tcp6", true, res, mypid, inodeMap, nil); err != nil {
+		if err := parseProcNetFile("/proc/net/tcp6", true, res, mypid, selfInodes, inodeMap, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -196,7 +222,7 @@ func buildInodeToPIDMap() map[string]procInfo {
 	return inodes
 }
 
-func parseProcNetFile(path string, isV6 bool, res *Result, mypid int, inodeMap map[string]procInfo, missingInodes *bool) error {
+func parseProcNetFile(path string, isV6 bool, res *Result, mypid int, selfInodes map[string]bool, inodeMap map[string]procInfo, missingInodes *bool) error {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) && isV6 {
@@ -238,15 +264,22 @@ func parseProcNetFile(path string, isV6 bool, res *Result, mypid int, inodeMap m
 		port := int(portUint)
 
 		inode := fields[9]
-		if info, ok := inodeMap[inode]; ok {
+		isSelfSocket := selfInodes != nil && selfInodes[inode]
+		var socketPID int
+
+		if isSelfSocket {
+			socketPID = mypid
+			res.PIDs[port] = mypid
+			res.Names[port] = "nasconnplus"
+		} else if info, ok := inodeMap[inode]; ok {
+			socketPID = info.pid
 			res.PIDs[port] = info.pid
 			res.Names[port] = info.name
 		} else if missingInodes != nil {
 			*missingInodes = true
 		}
 
-		pid := res.PIDs[port]
-		ipHex := parts[0]
+		ipHex := strings.ToUpper(parts[0])
 
 		if !isV6 {
 			// IPv4: 00000000 represents 0.0.0.0
@@ -254,12 +287,21 @@ func parseProcNetFile(path string, isV6 bool, res *Result, mypid int, inodeMap m
 				res.V4Wild[port] = true
 			}
 		} else {
-			// IPv6: 00000000000000000000000000000000 represents [::]
+			// IPv6:
+			// 00000000000000000000000000000000 represents [::]
+			// 00000000000000000000FFFF00000000 represents ::ffff:0.0.0.0 (IPv4-mapped wildcard)
 			if ipHex == "00000000000000000000000000000000" {
 				res.V6Any[port] = true
-				if pid != mypid {
+				if isSelfSocket {
+					// Our own socket is never an external listener
+				} else if socketPID != 0 && socketPID != mypid {
+					res.V6Others[port] = true
+				} else if socketPID == 0 {
+					// Unmapped socket not belonging to our process
 					res.V6Others[port] = true
 				}
+			} else if ipHex == "00000000000000000000FFFF00000000" {
+				res.V4Wild[port] = true
 			}
 		}
 	}

@@ -5,12 +5,37 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
 	DefaultConfigPath = "/etc/nasconnplus/config.json"
 	LocalConfigPath   = "./config.json"
 )
+
+// DefaultExcludePorts contains common management, database, and infrastructure ports
+// that should not be automatically exposed or proxied without explicit intent.
+var DefaultExcludePorts = []int{
+	22,    // SSH
+	23,    // Telnet
+	53,    // DNS
+	111,   // rpcbind
+	135,   // MS RPC
+	137,   // NetBIOS Name Service
+	138,   // NetBIOS Datagram
+	139,   // NetBIOS Session
+	445,   // SMB
+	2049,  // NFS
+	2375,  // Docker API (plain)
+	2376,  // Docker API (TLS)
+	3306,  // MySQL / MariaDB
+	3389,  // RDP
+	5432,  // PostgreSQL
+	6379,  // Redis
+	9200,  // Elasticsearch
+	11211, // Memcached
+	27017, // MongoDB
+}
 
 type HTTPSPort struct {
 	Name  string `json:"name"`
@@ -60,13 +85,22 @@ func DefaultConfigText() string {
 `
 }
 
-// ResolveConfigPath locates an existing config file or returns the default target path
+// ResolveConfigPath locates an existing config file or returns the default target path.
+// It avoids loading relative ./config.json from world-writable directories such as /tmp for security.
 func ResolveConfigPath(specified string) string {
 	if specified != "" {
 		return specified
 	}
+	// Prefer system-wide config if present
+	if _, err := os.Stat(DefaultConfigPath); err == nil {
+		return DefaultConfigPath
+	}
+	// Only load local config if safe (not in /tmp or /var/tmp)
 	if _, err := os.Stat(LocalConfigPath); err == nil {
-		return LocalConfigPath
+		wd, err := os.Getwd()
+		if err == nil && !strings.HasPrefix(wd, "/tmp") && !strings.HasPrefix(wd, "/var/tmp") {
+			return LocalConfigPath
+		}
 	}
 	return DefaultConfigPath
 }
@@ -127,6 +161,14 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.HTTPSOffset <= 0 {
 		cfg.HTTPSOffset = 1
+	}
+
+	// Exclude lists: if omitted in config, default to safe well-known ports
+	if cfg.Relay.Exclude == nil {
+		cfg.Relay.Exclude = append([]int(nil), DefaultExcludePorts...)
+	}
+	if cfg.HTTPSExclude == nil {
+		cfg.HTTPSExclude = append([]int(nil), DefaultExcludePorts...)
 	}
 
 	// Validate mappings

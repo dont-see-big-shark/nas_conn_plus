@@ -30,7 +30,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.24'
 
       - name: Build Binary
         env:
@@ -40,14 +40,18 @@ jobs:
           CGO_ENABLED: 0
         run: |
           TAG_NAME="${GITHUB_REF#refs/tags/}"
+          BUILD_DATE=$(date -u +'%Y-%m-%d')
           OUTPUT_NAME="nasconnplus-${{ matrix.goos }}-${{ matrix.goarch }}"
           if [ -n "${{ matrix.goarm }}" ]; then
             OUTPUT_NAME="${OUTPUT_NAME}v${{ matrix.goarm }}"
           fi
-          go build -trimpath -ldflags="-s -w -X 'github.com/jadenjoe/nasconnplus/internal/app.Version=${TAG_NAME}'" -o "${OUTPUT_NAME}" ./cmd/nasconnplus
+          go build -trimpath -ldflags="-s -w -X 'github.com/jadenjoe/nasconnplus/internal/app.Version=${TAG_NAME}' -X 'github.com/jadenjoe/nasconnplus/internal/app.BuildDate=${BUILD_DATE}'" -o "${OUTPUT_NAME}" ./cmd/nasconnplus
           tar -czvf "${OUTPUT_NAME}.tar.gz" "${OUTPUT_NAME}" config.example.json deploy/nasconnplus.service
+          sha256sum "${OUTPUT_NAME}.tar.gz" > "${OUTPUT_NAME}.tar.gz.sha256"
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
-          files: nasconnplus-*.tar.gz
+          files: |
+            nasconnplus-*.tar.gz
+            nasconnplus-*.tar.gz.sha256

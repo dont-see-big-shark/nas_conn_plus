@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    name: Test & Coverage (Go ${{ matrix.go-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: [ '1.24', '1.25' ]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - name: Verify Dependencies
+        run: |
+          go mod verify
+
+      - name: Run go vet
+        run: |
+          go vet ./...
+
+      - name: Run Tests with Race Detector and Coverage
+        run: |
+          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Output Coverage Summary
+        run: |
+          go tool cover -func=coverage.out
+
+      - name: Upload Coverage to Codecov
+        uses: codecov/codecov-action@v5
+        continue-on-error: true
+        with:
+          files: ./coverage.out
+          fail_ci_if_error: false
+          verbose: true
+
+      - name: Verify Cross-Platform Compilation
+        env:
+          CGO_ENABLED: 0
+        run: |
+          GOOS=linux GOARCH=amd64 go build -trimpath -o /dev/null ./cmd/nasconnplus
+          GOOS=linux GOARCH=arm64 go build -trimpath -o /dev/null ./cmd/nasconnplus
