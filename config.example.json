@@ -1,0 +1,22 @@
+{
+  "_comment": "nasconn+ 核心配置范例（精简开箱即用，所有高级字段均内置合理默认值）",
+  "_comment_cert": "自签名证书绑定的主机名/域名（默认自动生成并在内存中热重载 ECDSA 证书）",
+  "cert_host": "nas.local",
+  "_comment_relay": "自动将仅监听 IPv4 (0.0.0.0) 的端口镜像至 IPv6 ([::])（Linux 下启用 splice 零拷贝）",
+  "relay": {
+    "auto": true,
+    "exclude": [
+      22,
+      53
+    ]
+  },
+  "_comment_https": "全自动嗅探本地 HTTP 服务并在 端口+1 建立带证书的 HTTPS 代理通道，日常无需逐条配置",
+  "https_auto": true,
+  "https_exclude": [
+    22,
+    53
+  ],
+  "_comment_advanced": "=== 以下为可选高级配置（按需配置，平时完全无需定义） ===",
+  "_optional_https": "自定义固定端口映射: \"https\": [{\"name\": \"网盘\", \"http\": 8080, \"https\": 8443}]",
+  "_optional_acme": "自动申请 Let's Encrypt 证书: \"acme\": {\"enabled\": true, \"domain\": \"nas.yourdomain.com\", \"email\": \"admin@yourdomain.com\"}"
+}

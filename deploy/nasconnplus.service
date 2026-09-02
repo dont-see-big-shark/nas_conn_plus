@@ -1,0 +1,22 @@
+[Unit]
+Description=nasconn+ Seamless IPv6 Relay & HTTPS Upgrade Service
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# Adjust the binary path if installed elsewhere
+ExecStart=/usr/local/bin/nasconnplus -c /etc/nasconnplus/config.json
+Restart=always
+RestartSec=5s
+
+# Resource and limit configurations
+LimitNOFILE=65535
+LimitNPROC=65535
+
+# Ambient capabilities for binding ports
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

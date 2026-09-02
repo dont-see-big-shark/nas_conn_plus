@@ -1,0 +1,32 @@
+# Binaries for programs and plugins
+nasconnplus
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with 'go test -c'
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Go workspace file
+go.work
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Local configuration and self-signed certs
+/tls/
+/selfsigned/
+*.key
+*.crt
+*.pem
+/dist/

@@ -1,0 +1,19 @@
+services:
+  nasconnplus:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: nasconnplus:latest
+    container_name: nasconnplus
+    restart: unless-stopped
+    # IMPORTANT: nasconnplus must use host networking and host pid namespace
+    # to scan host listening ports (ss -tlnp) and bind IPv6/HTTPS listeners directly.
+    network_mode: host
+    pid: host
+    privileged: true
+    volumes:
+      - ./config.json:/etc/nasconnplus/config.json
+      - ./tls:/etc/nasconnplus/tls
+      - ./acme_cache:/etc/nasconnplus/acme_cache
+    environment:
+      - TZ=Asia/Shanghai
