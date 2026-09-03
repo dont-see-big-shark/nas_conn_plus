@@ -80,16 +80,23 @@ func RenderStatus(report *StatusReport) string {
 	var rows [][]string
 	var totalActive int64
 	var totalTraffic uint64
+	var totalErrors uint64
 
 	now := time.Now()
 	for _, l := range report.Listeners {
 		totalActive += l.ActiveConn
 		trafficBytes := l.BytesIn + l.BytesOut
 		totalTraffic += trafficBytes
+		totalErrors += l.ErrorCount
 
 		typeStr := styleTypeRelay
 		if l.Kind == "https" {
 			typeStr = styleTypeHTTPS
+		}
+
+		statusStr := lipgloss.NewStyle().Foreground(lipgloss.Color("#50FA7B")).Render("● OK")
+		if l.ErrorCount > 0 {
+			statusStr = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5555")).Render(fmt.Sprintf("▲ %d err", l.ErrorCount))
 		}
 
 		activeStr := strconv.FormatInt(l.ActiveConn, 10)
@@ -97,7 +104,7 @@ func RenderStatus(report *StatusReport) string {
 			activeStr = styleActivePositive.Render(activeStr)
 		}
 
-		listenStr := fmt.Sprintf(":%d", l.Port)
+		var listenStr string
 		if l.Kind == "https" {
 			listenStr = fmt.Sprintf("https :%d", l.Port)
 		} else {
@@ -114,6 +121,7 @@ func RenderStatus(report *StatusReport) string {
 			typeStr,
 			listenStr,
 			fmt.Sprintf("127.0.0.1:%d", l.Backend),
+			statusStr,
 			activeStr,
 			strconv.FormatUint(l.TotalConn, 10),
 			trafficStr,
@@ -124,7 +132,7 @@ func RenderStatus(report *StatusReport) string {
 	t := table.New().
 		Border(lipgloss.RoundedBorder()).
 		BorderStyle(styleBorder).
-		Headers("SERVICE", "TYPE", "LISTEN ADDR", "BACKEND", "ACTIVE", "TOTAL", "TRAFFIC (RX / TX)", "UPTIME").
+		Headers("SERVICE", "TYPE", "LISTEN ADDR", "BACKEND", "STATUS", "ACTIVE", "TOTAL", "TRAFFIC (RX / TX)", "UPTIME").
 		Rows(rows...).
 		StyleFunc(func(row, col int) lipgloss.Style {
 			if row == table.HeaderRow {
@@ -139,11 +147,12 @@ func RenderStatus(report *StatusReport) string {
 
 	daemonUptime := formatDuration(time.Duration(report.UptimeSeconds) * time.Second)
 	summaryLine := fmt.Sprintf(
-		"● Daemon: v%s | Uptime: %s | Active Conns: %d | Total Traffic: %s",
+		"● Daemon: v%s | Uptime: %s | Active Conns: %d | Total Traffic: %s | Total Errors: %d",
 		report.Version,
 		daemonUptime,
 		totalActive,
 		formatBytes(totalTraffic),
+		totalErrors,
 	)
 	sb.WriteString(styleSummary.Render(summaryLine))
 

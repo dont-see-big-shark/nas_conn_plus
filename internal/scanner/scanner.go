@@ -228,7 +228,8 @@ func buildInodeToPIDMap() map[string]procInfo {
 // never set V6Others. On missingInodes double-parse, caller provides a fresh
 // newResult() so stale V6Others cannot persist.
 func parseProcNetFile(path string, isV6 bool, res *Result, mypid int, selfInodes map[string]bool, inodeMap map[string]procInfo, missingInodes *bool) error {
-	f, err := os.Open(path)
+	// #nosec G304 - path is restricted to /proc/net/tcp or /proc/net/tcp6
+	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		if os.IsNotExist(err) && isV6 {
 			return nil
@@ -270,14 +271,11 @@ func parseProcNetFile(path string, isV6 bool, res *Result, mypid int, selfInodes
 
 		inode := fields[9]
 		isSelfSocket := selfInodes != nil && selfInodes[inode]
-		var socketPID int
 
 		if isSelfSocket {
-			socketPID = mypid
 			res.PIDs[port] = mypid
 			res.Names[port] = "nasconnplus"
 		} else if info, ok := inodeMap[inode]; ok {
-			socketPID = info.pid
 			res.PIDs[port] = info.pid
 			res.Names[port] = info.name
 		} else if missingInodes != nil {
@@ -292,20 +290,14 @@ func parseProcNetFile(path string, isV6 bool, res *Result, mypid int, selfInodes
 				res.V4Wild[port] = true
 			}
 		} else {
-			// IPv6:
-			// 00000000000000000000000000000000 represents [::]
-			// 00000000000000000000FFFF00000000 represents ::ffff:0.0.0.0 (IPv4-mapped wildcard)
-			if ipHex == "00000000000000000000000000000000" {
+			switch ipHex {
+			case "00000000000000000000000000000000":
 				res.V6Any[port] = true
-				if isSelfSocket {
-					// Our own socket is never an external listener
-				} else if socketPID != 0 && socketPID != mypid {
-					res.V6Others[port] = true
-				} else if socketPID == 0 {
-					// Unmapped socket not belonging to our process
+				if !isSelfSocket {
+					// Socket does not belong to our process -> external dual-stack or v6 listener
 					res.V6Others[port] = true
 				}
-			} else if ipHex == "00000000000000000000FFFF00000000" {
+			case "00000000000000000000FFFF00000000":
 				res.V4Wild[port] = true
 			}
 		}
@@ -361,10 +353,10 @@ func scanWithSS() (*Result, error) {
 			res.Names[port] = m[1]
 		}
 
-		switch {
-		case addr == "0.0.0.0":
+		switch addr {
+		case "0.0.0.0":
 			res.V4Wild[port] = true
-		case addr == "*" || addr == "[::]":
+		case "*", "[::]":
 			res.V6Any[port] = true
 			if pid != mypid {
 				res.V6Others[port] = true
@@ -499,6 +491,17 @@ func (r *Result) DiagnosticReport(excludedPorts []int) string {
 			v6Str = styleYes
 		}
 
+		httpsPred := "-"
+		if excludeMap[p] {
+			httpsPred = styleExcludedBadge
+		} else if v4 || v6 {
+			if ProbeHTTP(p) {
+				httpsPred = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#50FA7B")).Render(fmt.Sprintf("✓ https :%d", p+1))
+			} else {
+				httpsPred = lipgloss.NewStyle().Foreground(lipgloss.Color("#6272A4")).Render("No HTTP")
+			}
+		}
+
 		rows = append(rows, []string{
 			strconv.Itoa(p),
 			v4Str,
@@ -506,13 +509,14 @@ func (r *Result) DiagnosticReport(excludedPorts []int) string {
 			pidStr,
 			pName,
 			action,
+			httpsPred,
 		})
 	}
 
 	t := table.New().
 		Border(lipgloss.RoundedBorder()).
 		BorderStyle(styleBorder).
-		Headers("PORT", "IPv4 (0.0.0.0)", "IPv6 ([::])", "PID", "PROCESS", "RELAY ACTION").
+		Headers("PORT", "IPv4 (0.0.0.0)", "IPv6 ([::])", "PID", "PROCESS", "RELAY ACTION", "HTTPS (+1)").
 		Rows(rows...).
 		StyleFunc(func(row, col int) lipgloss.Style {
 			if row == table.HeaderRow {

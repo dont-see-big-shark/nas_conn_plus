@@ -3,7 +3,9 @@ package app
 import (
 	"flag"
 	"os"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/jadenjoe/nasconnplus/internal/cert"
 	"github.com/jadenjoe/nasconnplus/internal/config"
@@ -46,3 +48,59 @@ func TestApp_Run_Diagnostic(t *testing.T) {
 
 	Run()
 }
+
+func TestApp_Run_Status(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	flag.CommandLine = flag.NewFlagSet("nasconnplus", flag.ContinueOnError)
+	os.Args = []string{"nasconnplus", "status", "-socket", "/nonexistent/socket.sock"}
+
+	Run()
+}
+
+func TestApp_Run_ConfigError(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	flag.CommandLine = flag.NewFlagSet("nasconnplus", flag.ContinueOnError)
+	os.Args = []string{"nasconnplus", "-c", "/path/that/does/not/exist.json"}
+
+	Run()
+}
+
+func TestApp_Run_FullCycle(t *testing.T) {
+	tempDir := t.TempDir()
+	cfgPath := tempDir + "/config.json"
+	sockPath := tempDir + "/nasconn.sock"
+
+	cfg := `{
+		"cert_host": "localhost",
+		"self_dir": "` + tempDir + `",
+		"socket_path": "` + sockPath + `",
+		"poll_seconds": 1,
+		"relay": {"auto": false},
+		"https_auto": false
+	}`
+
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+
+	flag.CommandLine = flag.NewFlagSet("nasconnplus", flag.ContinueOnError)
+	os.Args = []string{"nasconnplus", "-c", cfgPath}
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		p, err := os.FindProcess(os.Getpid())
+		if err == nil {
+			_ = p.Signal(syscall.SIGINT)
+		}
+	}()
+
+	Run()
+}
+

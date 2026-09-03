@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -98,15 +99,41 @@ func TestProxy_HTTPS_ReverseProxyHeaders(t *testing.T) {
 func TestProxy_AutoHTTPDiscovery(t *testing.T) {
 	tempDir := t.TempDir()
 
-	// 1. Start a backend HTTP server
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("auto-discovered HTTP!"))
-	}))
-	defer backend.Close()
+	// 1. Acquire verified free port pair for backend and https
+	var lBackend net.Listener
+	var backendPort, targetHTTPSPort int
+	for i := 0; i < 50; i++ {
+		l1, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			continue
+		}
+		p1 := l1.Addr().(*net.TCPAddr).Port
+		l2, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p1+1))
+		if err != nil {
+			_ = l1.Close()
+			continue
+		}
+		_ = l2.Close()
+		lBackend = l1
+		backendPort = p1
+		targetHTTPSPort = p1 + 1
+		break
+	}
+	if lBackend == nil {
+		t.Fatal("failed to find adjacent free ports")
+	}
 
-	backendPort := backend.Listener.Addr().(*net.TCPAddr).Port
-	targetHTTPSPort := backendPort + 1
+	backend := &httptest.Server{
+		Listener: lBackend,
+		Config: &http.Server{
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("auto-discovered HTTP!"))
+			}),
+		},
+	}
+	backend.Start()
+	defer backend.Close()
 
 	// Config has EMPTY https rules! Only https_auto: true!
 	autoTrue := true
@@ -560,3 +587,184 @@ func TestProxy_CountingConn_FullLifecycle(t *testing.T) {
 		t.Errorf("expected active=0 after duplicate close, got %d", active.Load())
 	}
 }
+
+func TestProxy_ActiveCountingConn(t *testing.T) {
+	pipeR, pipeW := net.Pipe()
+	defer pipeW.Close()
+
+	var active atomic.Int64
+	active.Store(1)
+
+	zc := &activeCountingConn{
+		Conn:   pipeR,
+		active: &active,
+	}
+
+	if zc.UnderlyingConn() != pipeR {
+		t.Errorf("UnderlyingConn did not match")
+	}
+
+	_ = zc.Close()
+	if active.Load() != 0 {
+		t.Errorf("expected active=0 after close, got %d", active.Load())
+	}
+	// Duplicate close should be idempotent
+	_ = zc.Close()
+	if active.Load() != 0 {
+		t.Errorf("expected active=0 after duplicate close, got %d", active.Load())
+	}
+}
+
+func TestProxy_LimitListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen failed: %v", err)
+	}
+	defer ln.Close()
+
+	limitLn := newLimitListener(ln, 1)
+
+	// First client connects
+	go func() {
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err == nil {
+			defer c.Close()
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+
+	conn1, err := limitLn.Accept()
+	if err != nil {
+		t.Fatalf("accept failed: %v", err)
+	}
+	_ = conn1.Close()
+}
+
+func TestProxy_HSTS_Header(t *testing.T) {
+	tempDir := t.TempDir()
+	log := logger.New()
+
+	cfg := &config.Config{
+		CertHost: "nas.local",
+		HSTS: config.HSTSConfig{
+			Enabled: true,
+			MaxAge:  31536000,
+		},
+		HTTPSAuto: &[]bool{false}[0],
+	}
+
+	certs := cert.NewManager(cfg.CertConfigPath, cfg.CertHost, tempDir, true, false, "", "", "")
+	_ = certs.Refresh()
+
+	s := NewService(cfg, log, certs)
+
+	// Backend server
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	backendPort := backend.Listener.Addr().(*net.TCPAddr).Port
+
+	st := &listenerState{
+		kind:      "https",
+		name:      "hsts-test",
+		port:      backendPort + 10,
+		backend:   backendPort,
+		stop:      make(chan struct{}),
+		startedAt: time.Now(),
+	}
+
+	w := want{
+		kind:    "https",
+		name:    "hsts-test",
+		port:    backendPort + 10,
+		backend: backendPort,
+		tls:     true,
+	}
+
+	s.startHTTPServer(st, w)
+	defer func() {
+		if st.httpServer != nil {
+			_ = st.httpServer.Close()
+		}
+	}()
+
+	// Test handler directly
+	req := httptest.NewRequest("GET", "https://nas.example.com/", nil)
+	rec := httptest.NewRecorder()
+
+	st.httpServer.Handler.ServeHTTP(rec, req)
+
+	hsts := rec.Header().Get("Strict-Transport-Security")
+	if !strings.Contains(hsts, "max-age=31536000") {
+		t.Errorf("expected HSTS header for domain name, got %q", hsts)
+	}
+
+	// For IP address, HSTS MUST NOT be injected (RFC 6797)
+	reqIP := httptest.NewRequest("GET", "https://192.168.1.100/", nil)
+	recIP := httptest.NewRecorder()
+	st.httpServer.Handler.ServeHTTP(recIP, reqIP)
+
+	hstsIP := recIP.Header().Get("Strict-Transport-Security")
+	if hstsIP != "" {
+		t.Errorf("HSTS header must not be set for IP literal, got %q", hstsIP)
+	}
+}
+
+func TestProxy_AllowLists_And_Handover(t *testing.T) {
+	cfg := &config.Config{
+		Relay: config.RelayCfg{
+			Auto:  true,
+			Allow: []int{8080},
+		},
+		HTTPSAllow: []int{9090},
+	}
+	s := &Service{cfg: cfg}
+
+	if !s.isRelayAllowed(8080) {
+		t.Error("expected 8080 allowed for relay")
+	}
+	if s.isRelayAllowed(8081) {
+		t.Error("expected 8081 rejected by relay allow list")
+	}
+	if !s.isHTTPSAllowed(9090) {
+		t.Error("expected 9090 allowed for https")
+	}
+	if s.isHTTPSAllowed(9091) {
+		t.Error("expected 9091 rejected by https allow list")
+	}
+}
+
+func TestProxy_CountingReadCloser_And_ResponseWriter(t *testing.T) {
+	var bytesIn atomic.Uint64
+	var bytesOut atomic.Uint64
+
+	// Test countingReadCloser
+	rc := io.NopCloser(strings.NewReader("hello world"))
+	crc := &countingReadCloser{ReadCloser: rc, read: &bytesIn}
+
+	buf := make([]byte, 5)
+	n, err := crc.Read(buf)
+	if err != nil || n != 5 {
+		t.Fatalf("read failed: %v, n=%d", err, n)
+	}
+	if bytesIn.Load() != 5 {
+		t.Errorf("expected bytesIn=5, got %d", bytesIn.Load())
+	}
+	_ = crc.Close()
+
+	// Test countingResponseWriter
+	rec := httptest.NewRecorder()
+	crw := &countingResponseWriter{ResponseWriter: rec, written: &bytesOut}
+
+	wn, err := crw.Write([]byte("foobar"))
+	if err != nil || wn != 6 {
+		t.Fatalf("write failed: %v, wn=%d", err, wn)
+	}
+	if bytesOut.Load() != 6 {
+		t.Errorf("expected bytesOut=6, got %d", bytesOut.Load())
+	}
+}
+
+

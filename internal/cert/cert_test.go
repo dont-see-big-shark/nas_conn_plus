@@ -161,14 +161,14 @@ func TestCertManager_ResolveCertFiles_Precedence(t *testing.T) {
 
 	// 1. Asking for exact.local should return exact.crt (NOT wild.crt!)
 	cmExact := NewManager(cfgFile, "exact.local", tempDir, false, false, "", "", "")
-	c, k, err := cmExact.resolveCertFiles()
+	c, k, err := cmExact.resolveCertFilesWith(cmExact.cfgPath, cmExact.host)
 	if err != nil || c != certExact || k != keyExact {
 		t.Errorf("expected exact.crt, got cert=%s, err=%v (M-a regression)", c, err)
 	}
 
 	// 2. Asking for unknown host should fallback to "fallback"
 	cmUnknown := NewManager(cfgFile, "unknown.local", tempDir, false, false, "", "", "")
-	c, k, err = cmUnknown.resolveCertFiles()
+	c, k, err = cmUnknown.resolveCertFilesWith(cmUnknown.cfgPath, cmUnknown.host)
 	if err != nil || c != certFallback || k != keyFallback {
 		t.Errorf("expected fallback.crt for unknown host, got cert=%s, err=%v", c, err)
 	}
@@ -204,7 +204,7 @@ func TestCertManager_ResolveCertFiles_Errors(t *testing.T) {
 
 	// 1. Missing config file
 	cmMissing := NewManager(filepath.Join(tempDir, "nonexistent.json"), "nas.local", tempDir, false, false, "", "", "")
-	if _, _, err := cmMissing.resolveCertFiles(); err == nil {
+	if _, _, err := cmMissing.resolveCertFilesWith(cmMissing.cfgPath, cmMissing.host); err == nil {
 		t.Error("expected error for nonexistent cert config file")
 	}
 
@@ -212,7 +212,7 @@ func TestCertManager_ResolveCertFiles_Errors(t *testing.T) {
 	malformedCfg := filepath.Join(tempDir, "malformed.json")
 	_ = os.WriteFile(malformedCfg, []byte("bad json"), 0o644)
 	cmMalformed := NewManager(malformedCfg, "nas.local", tempDir, false, false, "", "", "")
-	if _, _, err := cmMalformed.resolveCertFiles(); err == nil {
+	if _, _, err := cmMalformed.resolveCertFilesWith(cmMalformed.cfgPath, cmMalformed.host); err == nil {
 		t.Error("expected error for malformed json")
 	}
 
@@ -224,7 +224,7 @@ func TestCertManager_ResolveCertFiles_Errors(t *testing.T) {
 	b, _ := json.Marshal(entries)
 	_ = os.WriteFile(noMatchCfg, b, 0o644)
 	cmNoMatch := NewManager(noMatchCfg, "nas.local", tempDir, false, false, "", "", "")
-	if _, _, err := cmNoMatch.resolveCertFiles(); err == nil {
+	if _, _, err := cmNoMatch.resolveCertFilesWith(cmNoMatch.cfgPath, cmNoMatch.host); err == nil {
 		t.Error("expected error when no host matches and no fallback")
 	}
 }

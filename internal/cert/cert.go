@@ -96,7 +96,8 @@ func (m *Manager) certFingerprint(certFile, keyFile string) string {
 	if err1 != nil || err2 != nil {
 		return fmt.Sprintf("file:%s:%s", certFile, keyFile)
 	}
-	data, err := os.ReadFile(certFile)
+	// #nosec G304 - certFile is controlled by administrator configuration
+	data, err := os.ReadFile(filepath.Clean(certFile))
 	if err != nil {
 		return fmt.Sprintf("file:%s:%d:%d", certFile, cStat.ModTime().UnixNano(), kStat.ModTime().UnixNano())
 	}
@@ -185,7 +186,8 @@ func (m *Manager) Refresh() error {
 }
 
 func (m *Manager) resolveCertFilesWith(cfgPath, host string) (string, string, error) {
-	b, err := os.ReadFile(cfgPath)
+	// #nosec G304 - cfgPath is controlled by administrator configuration
+	b, err := os.ReadFile(filepath.Clean(cfgPath))
 	if err != nil {
 		return "", "", err
 	}
@@ -203,14 +205,6 @@ func (m *Manager) resolveCertFilesWith(cfgPath, host string) (string, string, er
 	}
 
 	return "", "", fmt.Errorf("invalid cert config format in %s", cfgPath)
-}
-
-func (m *Manager) resolveCertFiles() (string, string, error) {
-	m.mu.RLock()
-	cfgPath := m.cfgPath
-	host := m.host
-	m.mu.RUnlock()
-	return m.resolveCertFilesWith(cfgPath, host)
 }
 
 func (m *Manager) loadOrCreateSelfSignedWith(selfDir, host string) (*tls.Certificate, string, error) {
@@ -280,30 +274,36 @@ func (m *Manager) loadOrCreateSelfSignedWith(selfDir, host string) (*tls.Certifi
 		return nil, "", fmt.Errorf("create certificate: %w", err)
 	}
 
-	crtOut, err := os.OpenFile(crtPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	// #nosec G304 - crtPath is within isolated selfDir
+	crtOut, err := os.OpenFile(crtPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return nil, "", err
 	}
 	if err := pem.Encode(crtOut, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
-		crtOut.Close()
+		_ = crtOut.Close()
 		return nil, "", fmt.Errorf("encode certificate: %w", err)
 	}
-	crtOut.Close()
+	if err := crtOut.Close(); err != nil {
+		return nil, "", err
+	}
 
 	kb, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
 		return nil, "", err
 	}
 
+	// #nosec G304 - keyPath is within isolated selfDir
 	keyOut, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return nil, "", err
 	}
 	if err := pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: kb}); err != nil {
-		keyOut.Close()
+		_ = keyOut.Close()
 		return nil, "", fmt.Errorf("encode private key: %w", err)
 	}
-	keyOut.Close()
+	if err := keyOut.Close(); err != nil {
+		return nil, "", err
+	}
 
 	kc, err := tls.LoadX509KeyPair(crtPath, keyPath)
 	if err != nil {
@@ -313,18 +313,4 @@ func (m *Manager) loadOrCreateSelfSignedWith(selfDir, host string) (*tls.Certifi
 		return &kc, actualDir, nil
 	}
 	return &kc, "", nil
-}
-
-func (m *Manager) loadOrCreateSelfSigned() (*tls.Certificate, error) {
-	m.mu.RLock()
-	selfDir := m.selfDir
-	host := m.host
-	m.mu.RUnlock()
-	cert, newDir, err := m.loadOrCreateSelfSignedWith(selfDir, host)
-	if err == nil && newDir != "" {
-		m.mu.Lock()
-		m.selfDir = newDir
-		m.mu.Unlock()
-	}
-	return cert, err
 }

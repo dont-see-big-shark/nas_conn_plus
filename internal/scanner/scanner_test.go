@@ -254,3 +254,97 @@ func TestScan_Basic(t *testing.T) {
 	}
 }
 
+func TestParseProcNetFile_EdgeCasesAndErrors(t *testing.T) {
+	// 1. Non-existent file
+	res := newResult()
+	err := parseProcNetFile("/non/existent/path/tcp", false, res, 1234, nil, nil, nil)
+	if err == nil {
+		t.Errorf("expected error for non-existent file")
+	}
+
+	// Non-existent v6 file should silently return nil (v6 may not be supported by kernel)
+	errV6 := parseProcNetFile("/non/existent/path/tcp6", true, res, 1234, nil, nil, nil)
+	if errV6 != nil {
+		t.Errorf("expected nil error for missing tcp6 file, got %v", errV6)
+	}
+
+	// 2. Malformed lines
+	malformed := `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: short
+   1: INVALID:ADDR 00000000:0000 0A 00:00 00:00 0 0 0 1000 0
+   2: 00000000:GGGG 00000000:0000 0A 00:00 00:00 0 0 0 1000 0
+   3: 00000000:0000 00000000:0000 0A 00:00 00:00 0 0 0 1000 0
+   4: 00000000:FFFF00 00000000:0000 0A 00:00 00:00 0 0 0 1000 0
+   5: 00000000:0050 00000000:0000 01 00:00 00:00 0 0 0 1000 0
+`
+	tmpFile, err := os.CreateTemp("", "proc_net_malformed_*")
+	if err != nil {
+		t.Fatalf("temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	_, _ = tmpFile.WriteString(malformed)
+	tmpFile.Close()
+
+	res2 := newResult()
+	if err := parseProcNetFile(tmpFile.Name(), false, res2, 1234, nil, nil, nil); err != nil {
+		t.Errorf("parse should skip malformed lines without error: %v", err)
+	}
+	if len(res2.V4Wild) != 0 {
+		t.Errorf("expected 0 valid listening ports from malformed content, got %v", res2.V4Wild)
+	}
+}
+
+func TestDiagnosticReport_Branches(t *testing.T) {
+	// Empty result
+	emptyRes := newResult()
+	if !strings.Contains(emptyRes.DiagnosticReport(nil), "No listening TCP") {
+		t.Errorf("expected empty message for 0 ports")
+	}
+
+	// Dual-stack, IPv6-only, and unknown process
+	res := &Result{
+		V4Wild:   map[int]bool{80: true, 443: true},
+		V6Any:    map[int]bool{443: true, 8088: true},
+		V6Others: map[int]bool{8088: true},
+		PIDs:     map[int]int{80: 10, 443: 0},
+		Names:    map[int]string{80: "httpd"},
+	}
+
+	rep := res.DiagnosticReport([]int{80})
+	if !strings.Contains(rep, "IPv6-Only") {
+		t.Errorf("expected report to contain IPv6-Only")
+	}
+	if !strings.Contains(rep, "Native Dual-Stack") {
+		t.Errorf("expected report to contain Native Dual-Stack")
+	}
+	if !strings.Contains(rep, "Excluded") {
+		t.Errorf("expected report to contain Excluded")
+	}
+}
+
+func TestGetSelfSocketInodes(t *testing.T) {
+	// Just verify function executes without panic on any OS
+	inodes := getSelfSocketInodes()
+	if inodes == nil {
+		t.Errorf("expected non-nil map from getSelfSocketInodes")
+	}
+}
+
+func TestInodeCache_Lifecycle(t *testing.T) {
+	// Test refreshing and getting cached inodes
+	inodeMu.Lock()
+	cachedInodes["99999"] = procInfo{pid: 4321, name: "test-proc"}
+	inodeMu.Unlock()
+
+	m := getCachedInodes()
+	if m["99999"].name != "test-proc" {
+		t.Errorf("expected test-proc in cached inodes, got %v", m["99999"])
+	}
+
+	_ = refreshInodeCache()
+	_ = buildInodeToPIDMap()
+}
+
+
+

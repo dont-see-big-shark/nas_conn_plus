@@ -81,7 +81,7 @@ func (s *Server) serve() {
 			default:
 			}
 
-			if ne, ok := err.(net.Error); ok && (ne.Timeout() || ne.Temporary()) {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				time.Sleep(50 * time.Millisecond)
 				continue
 			}

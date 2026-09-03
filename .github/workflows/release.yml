@@ -45,8 +45,8 @@ jobs:
           if [ -n "${{ matrix.goarm }}" ]; then
             OUTPUT_NAME="${OUTPUT_NAME}v${{ matrix.goarm }}"
           fi
-          go build -trimpath -ldflags="-s -w -X 'github.com/jadenjoe/nasconnplus/internal/app.Version=${TAG_NAME}' -X 'github.com/jadenjoe/nasconnplus/internal/app.BuildDate=${BUILD_DATE}'" -o "${OUTPUT_NAME}" ./cmd/nasconnplus
-          tar -czvf "${OUTPUT_NAME}.tar.gz" "${OUTPUT_NAME}" config.example.json deploy/nasconnplus.service
+          go build -trimpath -ldflags="-s -w -X 'github.com/jadenjoe/nasconnplus/internal/app.Version=${TAG_NAME}' -X 'github.com/jadenjoe/nasconnplus/internal/app.BuildDate=${BUILD_DATE}'" -o nasconnplus ./cmd/nasconnplus
+          tar -czvf "${OUTPUT_NAME}.tar.gz" nasconnplus config.example.json deploy/nasconnplus.service
           sha256sum "${OUTPUT_NAME}.tar.gz" > "${OUTPUT_NAME}.tar.gz.sha256"
 
       - name: Upload Release Asset

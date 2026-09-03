@@ -28,6 +28,7 @@ func IsHTTPService(port int, timeout time.Duration) bool {
 	// 1. Fast TLS pre-check: If the port successfully completes a TLS handshake,
 	// it is ALREADY an HTTPS/TLS service. We must not upgrade or wrap it again!
 	tlsDialer := &net.Dialer{Timeout: timeout / 2}
+	// #nosec G402 - probe must check local port regardless of certificate validity
 	tlsConn, err := tls.DialWithDialer(tlsDialer, "tcp", fmt.Sprintf("127.0.0.1:%d", port), &tls.Config{
 		InsecureSkipVerify: true,
 	})

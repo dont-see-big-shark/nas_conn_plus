@@ -6,24 +6,23 @@ services:
     image: nasconnplus:latest
     container_name: nasconnplus
     restart: unless-stopped
-    # IMPORTANT: nasconnplus must use host networking and host pid namespace
-    # to scan host listening ports directly and bind IPv6/HTTPS listeners.
+    # IMPORTANT: nasconnplus requires host networking to inspect host listening ports
+    # and bind IPv6 relay / HTTPS listeners on the host network.
+    # Note: With /proc/self/fd socket inode tracking, pid: host and CAP_SYS_PTRACE are not needed.
     network_mode: host
-    pid: host
     cap_drop:
       - ALL
     cap_add:
       - NET_BIND_SERVICE
-      - SYS_PTRACE
     security_opt:
       - no-new-privileges:true
     read_only: true
     tmpfs:
       - /tmp
-      - /run
     volumes:
       - ./config.json:/etc/nasconnplus/config.json
       - ./tls:/etc/nasconnplus/tls
       - ./acme_cache:/etc/nasconnplus/acme_cache
+      - /run/nasconnplus:/run/nasconnplus
     environment:
       - TZ=Asia/Shanghai

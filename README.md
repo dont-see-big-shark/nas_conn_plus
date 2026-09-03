@@ -2,11 +2,11 @@
 
 # 🚀 nasconn+
 
-**专为 NAS 与家庭自建服务打造的轻量级连接增强工具**  
-*突破 IPv4 大内网限制 · 自动 IPv6 中继 · 端口 +1 无感升级 HTTPS*
+**Lightweight connection enhancement daemon engineered for NAS and self-hosted home labs**  
+*Overcome IPv4 CGNAT · Automated IPv6 Relay · Port+1 Seamless HTTPS Upgrade*
 
 [![CI](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml/badge.svg)](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/Coverage-70.4%25-brightgreen.svg?logo=codecov)](https://github.com/jadenjoe/nasconnplus)
+[![Coverage](https://img.shields.io/badge/Coverage-76.1%25-brightgreen.svg?logo=codecov)](https://github.com/jadenjoe/nasconnplus)
 [![Go Report Card](https://goreportcard.com/badge/github.com/jadenjoe/nasconnplus)](https://goreportcard.com/report/github.com/jadenjoe/nasconnplus)
 [![Latest Release](https://img.shields.io/github/v/release/jadenjoe/nasconnplus?logo=github&color=3388ff)](https://github.com/jadenjoe/nasconnplus/releases)
 [![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.22-00ADD8?logo=go)](https://golang.org)
@@ -16,104 +16,113 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 <p align="center">
-  <a href="#-为什么需要-nasconn-">为什么需要</a> •
-  <a href="#️-架构与工作原理">架构原理</a> •
-  <a href="#-核心特性">核心特性</a> •
-  <a href="#-快速开始">快速开始</a> •
-  <a href="#️-配置文件说明-configjson">配置说明</a> •
-  <a href="#-命令行参数与运维监控-cli--ergonomics">运维监控</a> •
-  <a href="#-测试与代码质量-testing--quality">测试与覆盖率</a> •
-  <a href="#️-源码编译与安装-build-from-source">源码构建</a> •
-  <a href="#-开发路线图-roadmap">路线图</a> •
-  <a href="#-安全建议">安全建议</a> •
-  <a href="#-参与贡献与社区">贡献指南</a>
+  <b>Language / 语言:</b>
+  <b>English</b> •
+  <a href="README_zh.md">简体中文</a>
+</p>
+
+<p align="center">
+  <a href="#-why-nasconn">Why nasconn+?</a> •
+  <a href="#️-architecture--how-it-works">Architecture</a> •
+  <a href="#-key-features">Key Features</a> •
+  <a href="#-quick-start">Quick Start</a> •
+  <a href="#️-configuration-guide-configjson">Configuration</a> •
+  <a href="#-cli--ergonomics">CLI & Ergonomics</a> •
+  <a href="#-testing--quality-assurance">Testing & Quality</a> •
+  <a href="#️-build-from-source">Build from Source</a> •
+  <a href="#-roadmap">Roadmap</a> •
+  <a href="#-security-considerations">Security</a> •
+  <a href="#-contributing">Contributing</a>
 </p>
 
 </div>
 
 ---
 
-## 💡 为什么需要 nasconn+ ？
+## 💡 Why nasconn+?
 
-在家庭宽带或私有 NAS（群晖 Synology、飞牛 fnOS、绿联 UGOS、极空间、Unraid、PVE）部署自建服务时，我们经常遇到两个极其头疼的问题：
+When deploying self-hosted applications on residential broadband or private NAS devices (Synology DSM, fnOS, UGREEN UGOS, ZimaOS, Unraid, TrueNAS, Proxmox VE), users consistently run into two frustrating bottlenecks:
 
-1. **IPv4 没有公网 IP（大内网 / CGNAT）**：
-   - 运营商不再提供公网 IPv4，但**几乎都分配了公网 IPv6**。
-   - 很多 Docker 容器或旧服务默认**仅监听 `0.0.0.0` (IPv4-only)**，外网 IPv6 流量根本无法直接访问。
-2. **现代浏览器对 HTTP 的严格封锁（Secure Context）**：
-   - 绝大多数自建服务（如面板、网盘、相册、笔记）原生只提供 HTTP 协议。
-   - 在非 `localhost` 的外网环境下访问 HTTP 时，浏览器的剪贴板读写、PWA 安装、摄像头、麦克风、地理位置甚至密码自动填充会被**直接禁用**。
-3. **传统反向代理（Nginx / Caddy / NPM / Traefik）太繁琐**：
-   - 每新增一个容器，就得手动写一次反代规则、解析子域名、申请绑定证书，对于轻量玩家和自建很多容器的玩家来说维护负担很重。
+1. **No Public IPv4 Address (Carrier-Grade NAT / CGNAT)**:
+   - ISPs rarely assign public IPv4 addresses anymore, but **almost universally provide public IPv6 prefixes (`/64` or `/56`)**.
+   - Many legacy services and Docker containers listen strictly on `0.0.0.0` (IPv4-only) by default, rendering them inaccessible from public IPv6 networks.
+2. **Modern Browsers Enforcing Secure Contexts on Plain HTTP**:
+   - Most self-hosted services (dashboards, cloud drives, photo managers, note-taking apps) expose plain HTTP out of the box.
+   - When accessed remotely over non-`localhost` IPs or domains, browsers **disable critical Web APIs**: clipboard copy/paste, Progressive Web App (PWA) installation, camera/mic streaming, geolocation, and even credential autofill.
+3. **Traditional Reverse Proxies (Nginx, Caddy, NPM, Traefik) Add Maintenance Burden**:
+   - Setting up subdomains, SSL certificates, upstream directives, and DNS mappings for every single container or utility becomes cumbersome and error-prone.
 
-**`nasconn+`** 是一个**零侵入、隐形胶水层**守护进程：
-- **自动 IPv6 镜像（Relay）**：自动检测所有只监听在 `0.0.0.0` 的 IPv4 TCP 端口，全自动在 `[::]`（IPv6）建立同端口中继！
-- **HTTP 端口 +1 升级 HTTPS**：无需更改原本的 HTTP 服务，配置中指定端口后，`nasconn+` 自动在 `端口 + 1` 开启 TLS 终结，直接提供 HTTPS 访问！
+**`nasconn+`** serves as a **zero-intrusion, invisible glue daemon**:
+- **Automatic IPv6 Mirroring (Relay)**: Scans local TCP listeners bound strictly to `0.0.0.0`, and dynamically establishes transparent, same-port relaying on `[::]` (IPv6).
+- **HTTP Port +1 HTTPS Upgrade**: Without touching existing container setups, `nasconn+` intercepts plain HTTP services and terminates TLS at `port + 1` automatically.
 
 ---
 
-## 🛠️ 架构与工作原理
+## 🛠️ Architecture & How It Works
 
 ```text
-外部访问 (公网 IPv6 / 局域网)
+External Inbound Traffic (Public IPv6 / LAN)
     │
-    ├───> [::]:8080 (IPv6) ───[ nasconn+ Relay ]───> 127.0.0.1:8080 (本地 IPv4-Only 服务)
+    ├───> [::]:8080 (IPv6) ───[ nasconn+ L4 Relay ]──────> 127.0.0.1:8080 (Local IPv4-Only Service)
     │
-    └───> [::]:8081 (HTTPS) ──[ nasconn+ TLS终结 ]──> 127.0.0.1:8080 (解密转发给原 HTTP 服务)
+    └───> [::]:8081 (HTTPS) ──[ nasconn+ TLS Termination ]─> 127.0.0.1:8080 (Proxied with X-Forwarded headers)
 ```
 
-### ✨ 核心特性
+### ✨ Key Features
 
-- 🔄 **全自动生命周期自适应**：原生解析 Linux 内核 `/proc/net/tcp`，毫秒级快速扫描本地端口，后端服务启动即自动建立代理，后端关闭自动防抖回收，**不依赖外部 `ss` 命令**。
-- 🌐 **L7 智能反向代理（HTTPS 端口+1）**：基于 Go 标准库 `httputil.ReverseProxy` 构建，自动注入 `X-Forwarded-Proto: https`、`X-Forwarded-Host`、`X-Real-IP` 请求头，**彻底根治 1Panel / Nextcloud / WordPress 等 Web 应用的 302 重定向循环与 Mixed Content 错误**，原生支持 WebSocket 穿透。
-- 🚀 **高性能 L4 零拷贝中继（IPv6 Relay）**：复用 Google 团队维护的 `inetaf/tcpproxy`，Linux 下自动利用 `splice(2)` 零拷贝转发，高并发、低延迟、长连接保活。
-- 🤝 **原生双栈主动让位（Handover）**：若后端程序日后升级支持了原生 IPv6 双栈监听，`nasconn+` 检测到后会自动释放监听，绝不强占端口。
-- 🔐 **三级智能证书管理**：支持 **Let's Encrypt 自动申请与续签 (`autocert`)**、自定义证书热加载、以及自动生成 **ECDSA P-256** 10 年期自签证书保底。
-- 🎨 **现代极客终端体验**：由 `charmbracelet/lipgloss` 驱动的精美终端排版与 ASCII Logo，内置 `-t` 单次诊断模式，生成带圆角边框与状态 Badge 的网络报表。
-- 🛡️ **冲突自适应与优雅退出**：端口被临时占用时自动退避重试，支持 SIGINT / SIGTERM 优雅释放所有 Listener。
+- 🔄 **Adaptive Zero-Config Lifecycle**: Parses Linux kernel `/proc/net/tcp` directly with zero external tool dependencies. Automatically discovers newly started services in milliseconds and gracefully cleans up dead listeners with anti-flap debouncing.
+- 🌐 **Intelligent L7 Reverse Proxy (Port + 1 Upgrade)**: Built on Go's standard `httputil.ReverseProxy`. Injects sanitized `X-Forwarded-Proto: https`, `X-Forwarded-Host`, `X-Forwarded-Port`, and `X-Real-IP` headers to **permanently eliminate 302 redirect loops and Mixed Content errors** in apps like 1Panel, Nextcloud, and WordPress. Supports WebSocket pass-through natively.
+- 🚀 **High-Performance L4 Zero-Copy Relay**: Leverages Google's `inetaf/tcpproxy` engine. On Linux, transparently delegates socket bridging to kernel `splice(2)` zero-copy pipe operations, slashing CPU cycles and memory allocations under heavy traffic.
+- 🤝 **Native Dual-Stack Polite Handover**: If a backend service later updates to natively bind `[::]:port`, `nasconn+` detects the external inode and immediately surrenders the port without downtime or conflicts.
+- 🔐 **3-Tier Resilient Certificate Engine**:
+  1. Automated Let's Encrypt issuance and renewal via ACME (`autocert`).
+  2. Dynamic hot-reloading of custom external PEM certificates (SHA-256 fingerprint deduplication).
+  3. Built-in ECDSA P-256 10-year self-signed certificate generation as a dependable fallback.
+- 🎨 **Modern Geek Ergonomics**: Stylized CLI and ASCII banners powered by `charmbracelet/lipgloss`. Features a one-shot diagnostic mode (`-t`) that produces formatted terminal tables with color-coded status badges.
+- 🛡️ **Defensive Security Baseline**: Hardened with union-merged exclusion lists protecting 17 high-risk infrastructure ports, optional explicit whitelists, connection limits, and RFC 6797-compliant HSTS policy enforcement.
 
 ---
 
-## 🚦 快速开始
+## 🚦 Quick Start
 
-### 方式 1：二进制直接运行（推荐 Linux / NAS 宿主机）
+### Option 1: Standalone Binary (Recommended for Linux / NAS Host)
 
-1. 从 [Releases 页面](https://github.com/jadenjoe/nasconnplus/releases) 下载适合你架构的预编译包（支持 `amd64` / `arm64` / `armv7`）。
-2. 解压并赋予执行权限：
+1. Download the pre-built tarball for your CPU architecture (`amd64`, `arm64`, or `armv7`) from the [Releases page](https://github.com/jadenjoe/nasconnplus/releases).
+2. Extract the archive and install the binary:
    ```bash
    tar -zxvf nasconnplus-linux-amd64.tar.gz
    sudo mv nasconnplus /usr/local/bin/
    ```
-3. 诊断测试（查看当前主机的端口分布情况）：
+3. Run a diagnostic check to inspect the host's current listening ports:
    ```bash
    sudo nasconnplus -t
    ```
-4. 启动服务（首次运行会自动在当前目录或 `/etc/nasconnplus/` 生成默认配置文件）：
+4. Start the daemon (a default configuration file is automatically created on first launch):
    ```bash
    sudo nasconnplus -c /etc/nasconnplus/config.json
    ```
 
 ---
 
-### 方式 2：Systemd 后台常驻服务
+### Option 2: Systemd Daemon Service
 
-为了让 `nasconn+` 在 NAS 或 Linux 服务器开机自启且在后台稳定常驻，推荐使用 Systemd：
+To ensure `nasconn+` starts on boot and runs reliably in the background:
 
-1. 创建配置文件目录并放入配置：
+1. Create the configuration directory and copy the default config:
    ```bash
    sudo mkdir -p /etc/nasconnplus
    sudo cp config.example.json /etc/nasconnplus/config.json
    ```
-2. 安装服务单元：
+2. Install and register the systemd unit:
    ```bash
    sudo cp deploy/nasconnplus.service /etc/systemd/system/
    sudo systemctl daemon-reload
    ```
-3. 启动并设置开机自启：
+3. Enable and start the service:
    ```bash
    sudo systemctl enable --now nasconnplus
    ```
-4. 查看运行状态与日志：
+4. Check service status and live logs:
    ```bash
    sudo systemctl status nasconnplus
    journalctl -u nasconnplus -f
@@ -121,31 +130,24 @@
 
 ---
 
-### 方式 3：Docker / Docker Compose 一键部署
+### Option 3: Docker & Docker Compose
 
-对于极空间、飞牛私有云 (fnOS)、绿联 (UGOS)、群晖 (Synology)、Unraid 等 NAS 系统，推荐使用 Docker Compose 快速部署。
+For containerized NAS platforms like Synology, fnOS, UGREEN UGOS, ZimaOS, and Unraid:
 
 > [!IMPORTANT]
-> #### ⚠️ Docker 部署 5 大核心注意事项（必读避坑指南）
-> `nasconn+` 属于**底层网络基础设施**工具，需在宿主机嗅探端口并对外开放 IPv6/HTTPS 监听，因此容器配置有严格要求：
+> #### ⚠️ 4 Crucial Docker Considerations
+> `nasconn+` operates as low-level networking infrastructure. For optimal performance and safety:
 > 
-> 1. **必须配置 `network_mode: host`**：
->    Docker 默认的 `bridge`（桥接）网络会将容器隔离在独立虚拟子网中，导致容器**无法感知宿主机的 0.0.0.0 端口**，也无法直接在宿主机的公网 IPv6 上开放中继。必须使用 Host 主机网络。
-> 2. **必须配置 `pid: host`**：
->    用于扫描器访问宿主机的 `/proc` 获取端口属主（进程名与 PID）。若缺少此项，容器内将无法匹配宿主机上各进程的 PID。
-> 3. **必须开启特权模式（`privileged: true`）**：
->    绑定特权端口（< 1024，如 80/443）及设置 `IPV6_V6ONLY` 底层套接字需要 Linux 网络管理能力。也可以精细化配置：
->    ```yaml
->    cap_add:
->      - NET_ADMIN
->      - NET_BIND_SERVICE
->    ```
-> 4. **必须挂载数据卷持久化存储**：
->    容器必须挂载持久化目录（如 `./tls` 和 `./acme_cache`）。如果不挂载，每次容器更新或重启都会重新生成证书，导致浏览器因 SSL 证书指纹变更而报错拦截。
-> 5. **路由器 IPv6 防火墙放行（入站规则）**：
->    即使容器成功在中继了端口，若主路由器（光猫）默认拦截了入站流量，外网仍然无法连接。请在路由器设置中为 NAS 设备放行对应的 IPv6 入站端口。
+> 1. **Must use `network_mode: host`**:
+>    Docker's default bridge network isolates containers inside a virtual subnet. This prevents `nasconn+` from seeing the host's `0.0.0.0` listeners or binding to the host's public IPv6 address.
+> 2. **Least-Privilege Security (No Privileged Mode / No Host PID)**:
+>    `nasconn+` inspects `/proc/self/fd` socket inodes natively, entirely eliminating the need for `pid: host`, `privileged: true`, or `CAP_SYS_PTRACE`. It only requires `CAP_NET_BIND_SERVICE` to bind privileged ports (< 1024, like 80/443).
+> 3. **Mount Persistent Volumes**:
+>    Always mount `./tls` and `./acme_cache`. Without persistent storage, certificates will be regenerated on every container restart, causing SSL certificate fingerprint mismatch warnings in browsers. Mount `/run/nasconnplus` for host CLI IPC communication.
+> 4. **Router Inbound IPv6 Firewall Rules**:
+>    If your router's firewall blocks unsolicited incoming IPv6 traffic by default, open the necessary inbound IPv6 ports directed to your NAS.
 
-#### `docker-compose.yml` 完整配置：
+#### Production `docker-compose.yml`:
 
 ```yaml
 version: '3.8'
@@ -159,224 +161,246 @@ services:
     container_name: nasconnplus
     restart: unless-stopped
 
-    # 核心：必须使用宿主机网络和进程命名空间
+    # Essential: Must share the host network stack
     network_mode: host
-    pid: host
-    privileged: true
+
+    # Sandboxed least-privilege security
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
 
     volumes:
-      # 挂载配置文件（可选，首次启动会自动生成默认配置）
+      # Optional config override
       - ./config.json:/etc/nasconnplus/config.json
-      # 必须挂载：持久化存储 TLS 证书与 ACME 缓存，防止容器重建导致证书变更
+      # Mandatory persistent storage for TLS certificates & ACME state
       - ./tls:/etc/nasconnplus/tls
       - ./acme_cache:/etc/nasconnplus/acme_cache
+      # Shared socket directory for host CLI queries (nasconnplus status)
+      - /run/nasconnplus:/run/nasconnplus
 
     environment:
       - TZ=Asia/Shanghai
 ```
 
-运行容器：
+Run the container:
 ```bash
 docker compose up -d
 ```
 
 ---
 
-## ⚙️ 配置文件说明 (`config.json`)
+## ⚙️ Configuration Guide (`config.json`)
 
-`nasconn+` 设计遵循 **开箱即用、零繁琐配置** 原则。所有底层引擎参数（轮询频率、防抖周期、空闲超时、自签名证书目录等）均内置了生产级默认值。
+`nasconn+` is built on a **Zero-Config by Default** philosophy. Sane, production-tested defaults are pre-configured for polling intervals, debouncing counts, idle timeouts, and certificate storage.
 
-### 核心推荐配置（日常使用仅需以下几行）
+### Minimal Recommended Configuration
 
 ```json
 {
-  // 证书绑定的本地主机名或域名（默认自动生成并热重载本地 ECDSA 自签名证书）
+  // Domain or local hostname for TLS certificate SNI matching
   "cert_host": "nas.local",
 
-  // 自动将仅监听 IPv4 (0.0.0.0) 的端口镜像到 IPv6 ([::])
+  // Automatically mirror IPv4-only (0.0.0.0) listeners to IPv6 ([::])
   "relay": {
     "auto": true,
-    "exclude": [22, 53]      // 排除端口（如 SSH、DNS）
+    "exclude": [22, 53]      // Ports to exclude from relay
   },
 
-  // 全自动 HTTP 服务嗅探与 HTTPS 升级（自动在 端口 + 1 上建立 HTTPS 代理）
+  // Automatically discover HTTP services and upgrade them to HTTPS on port + 1
   "https_auto": true,
-  "https_exclude": [22, 53]  // 排除端口
+  "https_exclude": [22, 53]  // Ports to exclude from HTTPS upgrade
 }
 ```
 
-### 可选高级配置项（按需添加）
+### Full Configuration Reference
 
-| 配置项 | 类型 | 默认值 | 说明 |
+| Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `https_offset` | 整数 | `1` | 自动升级端口偏移量，例如 `1` 表示 `8080 -> 8081` |
-| `https` | 数组 | `[]` | 手动指定固定 HTTPS 映射（优先级高于 `https_auto`），例如：`[{"name": "网盘", "http": 8080, "https": 8443}]` |
-| `acme` | 对象 | 禁用 | 自动向 Let's Encrypt 申请免费证书：`{"enabled": true, "domain": "nas.xxx.com", "email": "admin@xxx.com"}` |
-| `cert_config_path` | 字符串 | `""` | 外部现有 TLS 证书清单文件路径（支持动态重载） |
-| `poll_seconds` | 整数 | `5` | 监听端口扫描探测周期（秒） |
-| `grace_polls` | 整数 | `2` | 后端服务离线防抖计数（连续 N 次扫描未发现时再回收端口） |
-| `idle_seconds` | 整数 | `900` | TCP 连接空闲超时释放时间（秒） |
+| `https_offset` | Integer | `1` | Port offset for automatic HTTPS upgrade (e.g. `1` upgrades `8080 -> 8081`) |
+| `https` | Array | `[]` | Explicit static HTTPS rules (takes precedence over `https_auto`), e.g. `[{"name": "WebDisk", "http": 8080, "https": 8443}]` |
+| `relay.zero_copy` | Boolean | `false` | Enables Linux kernel `splice(2)` zero-copy relaying. Drastically reduces CPU and GC overhead under high throughput (active connections tracked; byte counting bypassed) |
+| `relay.allow` | Array | `[]` | Whitelist for IPv6 relaying. If non-empty, only ports listed here are relayed (empty means fully automatic) |
+| `https_allow` | Array | `[]` | Whitelist for auto HTTPS upgrade. If non-empty, only ports listed here receive HTTPS upgrades |
+| `override_default_excludes` | Boolean | `false` | When `true`, disables the built-in 17 high-risk infrastructure exclusion ports |
+| `max_conns_per_listener` | Integer | `2048` | Hard concurrent connection ceiling per listener to guard against file descriptor exhaustion |
+| `hsts` | Object | Disabled | Strict-Transport-Security settings: `{"enabled": true, "max_age": 31536000, "include_subdomains": false}` (RFC 6797 compliant: automatically suppressed on IP literals and self-signed certificates) |
+| `socket_path` | String | Auto | Path to the Unix Domain Socket for IPC (defaults to `$XDG_RUNTIME_DIR/nasconnplus.sock` or `/run/nasconnplus/nasconnplus.sock`) |
+| `acme` | Object | Disabled | Automated Let's Encrypt certificate issuance: `{"enabled": true, "domain": "nas.example.com", "email": "admin@example.com"}` (requires public port 80 accessibility for HTTP-01 challenge) |
+| `cert_config_path` | String | `""` | Path to an external JSON file defining custom TLS certificate pairs (supports live reload) |
+| `poll_seconds` | Integer | `5` | Background socket scan interval in seconds |
+| `grace_polls` | Integer | `2` | Anti-flap debounce threshold: number of consecutive scans a port must be missing before recycling its proxy |
+| `idle_seconds` | Integer | `900` | Idle timeout in seconds before reaping inactive TCP connections |
 
 ---
 
-## 🔍 命令行参数与人体工程学 (CLI & Ergonomics)
+## 🔍 CLI & Ergonomics
 
 ```text
 Usage: nasconnplus [options] [command]
 
 Commands:
   status
-        即时查询当前后台常驻守护进程的实时转发状态大盘与吞吐统计
+        Query live proxy metrics and listener status from the active daemon
 
 Options:
   -c, -config string
-        指定配置文件路径（默认先寻找 ./config.json，再寻找 /etc/nasconnplus/config.json）
+        Configuration file path (searches ./config.json, then /etc/nasconnplus/config.json)
   -s, -status
-        查询运行中的守护进程状态（等同于 nasconnplus status）
+        Display running daemon status table (alias for `nasconnplus status`)
+  -socket string
+        Override the Unix domain socket path used for daemon communication
   -t, -test
-        诊断模式：执行一次扫描，输出当前主机所有端口的分类报表后退出
+        Diagnostic mode: perform a full host port probe and print report, then exit
   -v, -version
-        显示版本号与架构信息
+        Print version, commit, and runtime architecture
 ```
 
-#### 📊 实时状态大盘（`nasconnplus status` 或 `nasconnplus -s`）：
-随时随地在任意终端执行一行命令，立即输出当前各代理端口的活跃连接数、总处理量与吞吐流量统计：
+#### 📊 Live Status Dashboard (`nasconnplus status` or `nasconnplus -s`):
+Query the background daemon from any terminal shell to view listener health, active connections, total processed requests, and bandwidth statistics:
 
 ```text
-╭──────────┬────────────┬──────────────┬──────────────────┬────────┬───────┬─────────────────────────┬────────╮
-│ SERVICE  │ TYPE       │ LISTEN ADDR  │ BACKEND          │ ACTIVE │ TOTAL │ TRAFFIC (RX / TX)       │ UPTIME │
-├──────────┼────────────┼──────────────┼──────────────────┼────────┼───────┼─────────────────────────┼────────┤
-│ 1panel   │ HTTPS (L7) │ https :18091 │ 127.0.0.1:18090  │ 2      │ 154   │ ↓ 18.25 MB / ↑ 52.10 MB │ 1h 24m │
-│ webdisk  │ HTTPS (L7) │ https :8081  │ 127.0.0.1:8080   │ 1      │ 890   │ ↓ 120.4 MB / ↑ 1.48 GB  │ 1h 24m │
-│ relay:22 │ Relay (L4) │ [::]:2222    │ 127.0.0.1:2222   │ 0      │ 12    │ ↓ 45.00 KB / ↑ 82.30 KB │ 1h 24m │
-╰──────────┴────────────┴──────────────┴──────────────────┴────────┴───────┴─────────────────────────┴────────╯
+╭──────────┬────────────┬──────────────┬──────────────────┬────────┬────────┬───────┬─────────────────────────┬────────╮
+│ SERVICE  │ TYPE       │ LISTEN ADDR  │ BACKEND          │ STATUS │ ACTIVE │ TOTAL │ TRAFFIC (RX / TX)       │ UPTIME │
+├──────────┼────────────┼──────────────┼──────────────────┼────────┼────────┼───────┼─────────────────────────┼────────┤
+│ 1panel   │ HTTPS (L7) │ https :18091 │ 127.0.0.1:18090  │ ● OK   │ 2      │ 154   │ ↓ 18.25 MB / ↑ 52.10 MB │ 1h 24m │
+│ webdisk  │ HTTPS (L7) │ https :8081  │ 127.0.0.1:8080   │ ● OK   │ 1      │ 890   │ ↓ 120.4 MB / ↑ 1.48 GB  │ 1h 24m │
+│ relay:22 │ Relay (L4) │ [::]:2222    │ 127.0.0.1:2222   │ ● OK   │ 0      │ 12    │ ↓ 45.00 KB / ↑ 82.30 KB │ 1h 24m │
+╰──────────┴────────────┴──────────────┴──────────────────┴────────┴────────┴───────┴─────────────────────────┴────────╯
 
-● Daemon: v1.0.0 | Uptime: 1h 24m | Active Conns: 3 | Total Traffic: 1.67 GB
+● Daemon: v1.0.0 | Uptime: 1h 24m | Active Conns: 3 | Total Traffic: 1.67 GB | Total Errors: 0
 ```
 
-#### 🩺 端口诊断模式（`nasconnplus -t`）：
+#### 🩺 One-Shot Diagnostic Mode (`nasconnplus -t`):
 ```text
-╭───────┬────────────────┬─────────────┬──────┬───────────┬─────────────────────╮
-│ PORT  │ IPv4 (0.0.0.0) │ IPv6 ([::]) │ PID  │ PROCESS   │ RELAY ACTION        │
-├───────┼────────────────┼─────────────┼──────┼───────────┼─────────────────────┤
-│ 22    │ YES            │ YES         │ 1024 │ sshd      │ ● Native Dual-Stack │
-│ 3000  │ YES            │ No          │ 4182 │ node      │ ● Will Relay to IPv6│
-│ 8080  │ YES            │ No          │ 5219 │ java      │ ● Will Relay to IPv6│
-╰───────┴────────────────┴─────────────┴──────┴───────────┴─────────────────────╯
+╭───────┬────────────────┬─────────────┬──────┬───────────┬─────────────────────┬───────────────╮
+│ PORT  │ IPv4 (0.0.0.0) │ IPv6 ([::]) │ PID  │ PROCESS   │ RELAY ACTION        │ HTTPS (+1)    │
+├───────┼────────────────┼─────────────┼──────┼───────────┼─────────────────────┼───────────────┤
+│ 22    │ YES            │ YES         │ 1024 │ sshd      │ ● Native Dual-Stack │ No HTTP       │
+│ 3000  │ YES            │ No          │ 4182 │ node      │ ● Will Relay to IPv6│ ✓ https :3001 │
+│ 8080  │ YES            │ No          │ 5219 │ java      │ ● Will Relay to IPv6│ ✓ https :8081 │
+╰───────┴────────────────┴─────────────┴──────┴───────────┴─────────────────────┴───────────────╯
 ```
 
 ---
 
-## 🔒 安全建议
+## 🔒 Security Considerations
 
 > [!CAUTION]
-> 开启自动 IPv6 中继后，若路由器放行了 IPv6 入站流量，原本仅局域网可见的 IPv4 服务将通过 IPv6 **直接暴露至公网**。
+> Once automated IPv6 relaying is active, if your router allows inbound IPv6 connections, local services previously isolated to private IPv4 **will become directly reachable from the public Internet via IPv6**.
 
-1. **路由器防火墙**：建议在主路由上对非公开端口（如内网管理口、无密码测试服务）进行 IPv6 入站端口限制。
-2. **白名单排除**：对于 SSH (22)、内部数据库 (3306/5432) 等敏感服务，请在 `relay.exclude` 中明确排除。
-3. **安全凭据**：对于暴露在外网的服务，请务必开启强密码、多因素认证（2FA）或访问凭据。
+1. **High-Risk Ports Protected by Default**: `nasconn+` maintains an automatic protection list (ports `22, 53, 67, 68, 123, 161, 445, 1883, 2375, 3306, 5432, 6379, 8086, 9000, 9200, 11211, 27017`). User-defined exclusions are merged via union; built-in protections are never wiped out unless explicitly requested via `override_default_excludes: true`.
+2. **Router Firewall Hygiene**: We strongly recommend keeping the default drop policy for unsolicited inbound IPv6 traffic on your main gateway router, opening only the specific public ports you need.
+3. **Whitelist Mode**: In sensitive environments, specify `relay.allow` and `https_allow` arrays to adopt a strict whitelist approach.
+4. **Strong Credentials & 2FA**: Ensure any backend service exposed to the public Internet is protected by strong passwords and Multi-Factor Authentication (MFA).
+5. **ACME & HSTS Considerations**:
+   - ACME HTTP-01 validation requires public port 80 to be reachable. If your ISP blocks port 80, deploy pre-generated certificates using `cert_config_path` or rely on the internal self-signed generator.
+   - HSTS adheres strictly to RFC 6797: it is never injected for bare IP addresses or self-signed certificates, preventing irreversible browser lockouts.
 
 ---
 
-## 🧪 测试与质量保证 (Testing & Quality)
+## 🧪 Testing & Quality Assurance
 
-本项目核心业务模块均编写了自动化单元测试、集成测试与竞态检测（Race Detector），由 GitHub Actions CI 在多版本 Go 环境下自动守护。整体语句覆盖率达到 **70.4%**，核心子模块覆盖率明细如下：
+All core business modules are verified with automated unit tests, end-to-end integration tests, and Go's race detector (`-race`), continuously audited by GitHub Actions CI. Total codebase statement coverage stands at **76.1%**:
 
-| 模块 (Package) | 职责说明 | 覆盖率 (Coverage) | 质量保障重点 |
+| Package | Responsibility | Statement Coverage | Quality Focus |
 | :--- | :--- | :---: | :--- |
-| `internal/logger` | 结构化终端排版与多通道着色日志记录器 | **100.0%** | 并发无竞态、NO_COLOR 终端无缝降级 |
-| `internal/ipc` | Unix Domain Socket 客户端/服务端 IPC 通信 | **92.1%** | 0600 权限隔离、优雅重试、幂等销毁 |
-| `internal/config` | 配置文件查找、递归解析、约束校验与默认生成 | **88.1%** | 端口边界验证、/tmp 敏感路径防提权 |
-| `internal/cert` | TLS 证书管理器、ECDSA 自签与 Let's Encrypt 适配 | **75.7%** | 证书热重载、指纹防重复加载、多域名命中 |
-| `internal/proxy` | L4 零拷贝 TCP Relay 中继与 L7 HTTPS 反向代理引擎 | **67.9%** | X-Forwarded 协议头防伪造、防级联自环探测 |
-| `internal/scanner` | Linux 内核 procfs 端口嗅探、HTTP 探测与报表 | **61.3%** | procfs 零依赖解析、自进程 socket 过滤 |
-| `internal/app` | 守护进程生命周期与主事件循环协调器 | **46.3%** | 命令行参数解析、单次诊断、优雅信号终止 |
-| **综合覆盖率 (Total)** | **核心业务代码覆盖** | **`70.4%`** | **持续集成 CI 自动全链路守护** |
+| `internal/logger` | Structured terminal formatting & multi-channel logger | **100.0%** | Zero race conditions, graceful NO_COLOR fallback |
+| `cmd/nasconnplus` | CLI entry point & binary launcher | **100.0%** | Argument forwarding & lifecycle execution |
+| `internal/config` | Config discovery, recursive parsing & boundary validation | **87.2%** | High-risk port union protection, directory traversal defense |
+| `internal/app` | Daemon lifecycle, signal management & reconciliation loop | **84.7%** | Graceful SIGINT/SIGTERM termination, IPC integration |
+| `internal/ipc` | Unix Domain Socket client/server IPC communication | **84.2%** | 0600 socket permissions, retry logic, status rendering |
+| `internal/cert` | TLS certificate manager, ECDSA self-signing & ACME | **76.8%** | Live certificate reload, fingerprint caching, SNI fallback |
+| `internal/proxy` | L4 zero-copy TCP relay & L7 HTTPS reverse proxy engine | **69.0%** | Splice zero-copy, connection limiter, HSTS, smooth handover |
+| `internal/scanner` | Linux procfs socket sniffing, HTTP probing & diagnostics | **68.9%** | Zero-dependency procfs parsing, self-inode decoupling |
+| **Total Coverage** | **Entire Codebase Statements** | **`76.1%`** | **Automated CI Validation Across Go Versions** |
 
-### 本地运行测试与覆盖率报告
+### Local Test Execution
 
 ```bash
-# 运行全部单元测试
+# Run all unit tests
 make test
 
-# 运行测试并输出覆盖率统计
+# Run tests and output per-package coverage metrics
 make coverage
 
-# 开启竞态检测并生成 HTML 可视化覆盖率报表 (自动输出 coverage.html)
+# Run tests with race detector and generate visual HTML coverage report (coverage.html)
 make test-coverage
 
-# 执行代码风格与静态类型检查
+# Run static analyzers and security linters
 make lint
 ```
 
 ---
 
-## 🛠️ 源码编译与安装 (Build from Source)
+## 🛠️ Build from Source
 
-如果你本地已配置 Go（>= 1.22）环境，可以通过以下方式直接从源码安装或构建：
+Prerequisites: Go (>= 1.22) installed locally.
 
-### 方式 A：`go install` 一键全局安装
+### Method A: One-line `go install`
 ```bash
 go install github.com/jadenjoe/nasconnplus/cmd/nasconnplus@latest
 ```
 
-### 方式 B：源码本地编译
+### Method B: Clone & Build
 ```bash
-# 克隆仓库代码
+# Clone the repository
 git clone https://github.com/jadenjoe/nasconnplus.git
 cd nasconnplus
 
-# 编译当前平台二进制
+# Build binary for current platform
 make build
 
-# 一键跨平台交叉编译 (Linux amd64 / arm64 / armv7)，产物输出至 dist/ 目录
+# Cross-compile for Linux (amd64 / arm64 / armv7), outputs to dist/
 make release
 ```
 
 ---
 
-## 🗺️ 开发路线图 (Roadmap)
+## 🗺️ Roadmap
 
-`nasconn+` 持续演进中，欢迎社区共同参与建设：
-
-- [x] 原生 Linux `/proc/net/tcp` 零依赖、毫秒级端口自动探测
-- [x] L4 高性能零拷贝 IPv6 同端口透明中继（基于 Google `inetaf/tcpproxy` + Linux `splice(2)`）
-- [x] L7 智能反向代理（自动嗅探 HTTP 并在 `端口 + 1` 开启 HTTPS 升级）
-- [x] 标准 X-Forwarded 报头注入（解决 1Panel/Nextcloud 302 重定向循环）
-- [x] 三级证书安全管理（Let's Encrypt 自动续签、外部证书热重载、ECDSA 10年自签证书兜底）
-- [x] 本地 Unix Domain Socket 实时状态大盘（`nasconnplus status`）
-- [x] 终端人体工程学美化与单次诊断报表（`-t` 模式）
-- [ ] 📊 轻量级 WebUI 实时拓扑监控面板与吞吐图表
-- [ ] 🌐 UDP 端口 IPv6 镜像与中继转发支持
-- [ ] 🔑 ACME DNS-01 验证支持（针对家庭宽带封锁 80/443 端口场景自动申请泛域名证书）
-- [ ] 🎯 SNI 域名级智能多证书路由与虚拟主机支持
+- [x] Native Linux `/proc/net/tcp` zero-dependency, millisecond port detection
+- [x] L4 high-performance zero-copy IPv6 transparent relaying (`inetaf/tcpproxy` + Linux `splice(2)`)
+- [x] L7 smart reverse proxy (auto HTTP sniffing with `port + 1` HTTPS upgrades)
+- [x] Standard `X-Forwarded-*` header injection (resolves 1Panel / Nextcloud 302 redirect loops)
+- [x] 3-tier certificate management (ACME Let's Encrypt, custom cert hot-reload, ECDSA 10-year self-signed fallback)
+- [x] Local Unix Domain Socket live dashboard (`nasconnplus status`)
+- [x] Terminal ergonomics & single-run diagnostic reporting (`-t` mode)
+- [ ] 📊 Lightweight WebUI for real-time connection topology and throughput graphs
+- [ ] 🌐 UDP port IPv6 mirroring and relaying support
+- [ ] 🔑 ACME DNS-01 challenge support for automated wildcard certificates behind blocked port 80/443
+- [ ] 🎯 SNI-based domain-level virtual host routing
 
 ---
 
-## 🤝 参与贡献与社区 (Contributing)
+## 🤝 Contributing
 
-我们非常欢迎来自社区的任何贡献！无论是提出功能建议、汇报 Bug、改进文档，还是提交代码 PR。
+We warmly welcome community contributions! Whether submitting bug reports, suggesting features, improving documentation, or opening pull requests:
 
-- 📜 **贡献指南**：请阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 了解开发规范与 PR 提交说明。
-- 🛡️ **安全政策**：若发现潜在安全漏洞，请阅读 [SECURITY.md](SECURITY.md) 获取负责任披露指引。
-- 📝 **版本记录**：查看 [CHANGELOG.md](CHANGELOG.md) 获取最新更新历史。
-- 🐛 **提交反馈**：
-  - [提交 Bug 报告](https://github.com/jadenjoe/nasconnplus/issues/new?template=bug_report.md)
-  - [提出新功能建议](https://github.com/jadenjoe/nasconnplus/issues/new?template=feature_request.md)
-
----
-
-## 💖 鸣谢 (Acknowledgements)
-
-`nasconn+` 离不开开源社区优秀项目的基石力量：
-
-- [inetaf/tcpproxy](https://github.com/inetaf/tcpproxy) - 提供强大的底层 TCP 零拷贝代理能力
-- [charmbracelet/lipgloss](https://github.com/charmbracelet/lipgloss) - 提供优雅的现代极客终端排版与配色
-- [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto) - 提供 Let's Encrypt ACME 证书全自动化能力
+- 📜 **Contribution Guidelines**: See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and code standards.
+- 🛡️ **Security Policy**: See [SECURITY.md](SECURITY.md) for responsible vulnerability disclosure.
+- 📝 **Changelog**: See [CHANGELOG.md](CHANGELOG.md) for release history.
+- 🐛 **Issues**:
+  - [Report a Bug](https://github.com/jadenjoe/nasconnplus/issues/new?template=bug_report.md)
+  - [Request a Feature](https://github.com/jadenjoe/nasconnplus/issues/new?template=feature_request.md)
 
 ---
 
-## 📄 开源许可证 (License)
+## 💖 Acknowledgements
 
-本项目基于 [MIT 许可证](LICENSE) 开源，自由免费，允许商业与个人使用。
+`nasconn+` stands on the shoulders of these outstanding open-source projects:
 
+- [inetaf/tcpproxy](https://github.com/inetaf/tcpproxy) - Reliable, high-performance TCP proxying primitives
+- [charmbracelet/lipgloss](https://github.com/charmbracelet/lipgloss) - Beautiful, expressive terminal styling and layout
+- [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto) - Standard cryptographic building blocks and ACME client
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE) - free and open for both commercial and personal use.

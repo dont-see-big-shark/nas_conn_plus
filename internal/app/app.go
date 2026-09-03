@@ -36,6 +36,8 @@ func Run() {
 	versionFlag := flag.Bool("v", false, "Show version and build info")
 	flag.BoolVar(versionFlag, "version", false, "Show version and build info (alias for -v)")
 
+	socketFlag := flag.String("socket", "", "Path to IPC Unix domain socket (default: automatic)")
+
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] [command]\n\nCommands:\n  status       Query running daemon status\n\nOptions:\n", os.Args[0])
 		flag.PrintDefaults()
@@ -53,7 +55,7 @@ func Run() {
 			isValue := false
 			if i > 0 {
 				prev := args[i-1]
-				if prev == "-c" || prev == "-config" || prev == "--config" {
+				if prev == "-c" || prev == "-config" || prev == "--config" || prev == "-socket" {
 					isValue = true
 				}
 			}
@@ -77,7 +79,16 @@ func Run() {
 	log := logger.New()
 
 	if *statusFlag {
-		report, err := ipc.QueryStatus(ipc.DefaultSocketPath())
+		sockPath := *socketFlag
+		if sockPath == "" {
+			resolvedPath := config.ResolveConfigPath(*configPathFlag)
+			if cfg, err := config.LoadConfig(resolvedPath); err == nil && cfg.SocketPath != "" {
+				sockPath = cfg.SocketPath
+			} else {
+				sockPath = ipc.DefaultSocketPath()
+			}
+		}
+		report, err := ipc.QueryStatus(sockPath)
 		if err != nil {
 			log.Warn("%v", err)
 			return
@@ -152,7 +163,16 @@ func Run() {
 	srv := proxy.NewService(cfg, log, cm)
 	startTime := time.Now()
 
-	ipcServer, err := ipc.StartServer(ipc.DefaultSocketPath(), func() ipc.StatusReport {
+	sockPath := *socketFlag
+	if sockPath == "" {
+		if cfg.SocketPath != "" {
+			sockPath = cfg.SocketPath
+		} else {
+			sockPath = ipc.DefaultSocketPath()
+		}
+	}
+
+	ipcServer, err := ipc.StartServer(sockPath, func() ipc.StatusReport {
 		return ipc.StatusReport{
 			Version:       Version,
 			UptimeSeconds: int64(time.Since(startTime).Seconds()),
@@ -161,7 +181,7 @@ func Run() {
 		}
 	})
 	if err != nil {
-		log.Warn("IPC status server unavailable: %v", err)
+		log.Warn("IPC status server unavailable at %s: %v", sockPath, err)
 	} else {
 		defer ipcServer.Close()
 	}

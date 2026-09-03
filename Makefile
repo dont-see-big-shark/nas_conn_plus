@@ -9,7 +9,7 @@ all: build
 
 build:
 	@echo "Building $(BINARY_NAME)..."
-	go build -ldflags="$(LDFLAGS)" -o $(BINARY_NAME) ./cmd/nasconnplus
+	go build -trimpath -ldflags="$(LDFLAGS)" -o $(BINARY_NAME) ./cmd/nasconnplus
 
 test:
 	@echo "Running tests..."
@@ -27,12 +27,15 @@ test-coverage:
 	@echo "Generating HTML coverage report to coverage.html..."
 	go tool cover -html=coverage.out -o coverage.html
 
-
 vet:
 	@echo "Running go vet..."
 	go vet ./...
 
 lint: vet
+	@if command -v golangci-lint > /dev/null; then \
+		echo "Running golangci-lint..."; \
+		golangci-lint run ./...; \
+	fi
 	@echo "Code verification passed."
 
 clean:
@@ -44,9 +47,9 @@ clean:
 release: clean
 	@echo "Building release binaries for Linux amd64, arm64, armv7..."
 	mkdir -p dist
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o dist/$(BINARY_NAME)-linux-amd64 ./cmd/nasconnplus
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o dist/$(BINARY_NAME)-linux-arm64 ./cmd/nasconnplus
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="$(LDFLAGS)" -o dist/$(BINARY_NAME)-linux-armv7 ./cmd/nasconnplus
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/$(BINARY_NAME)-linux-amd64 ./cmd/nasconnplus
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/$(BINARY_NAME)-linux-arm64 ./cmd/nasconnplus
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="$(LDFLAGS)" -o dist/$(BINARY_NAME)-linux-armv7 ./cmd/nasconnplus
 	@echo "Release binaries created in dist/"
 
 docker-build:

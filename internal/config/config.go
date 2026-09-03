@@ -44,8 +44,10 @@ type HTTPSPort struct {
 }
 
 type RelayCfg struct {
-	Auto    bool  `json:"auto"`
-	Exclude []int `json:"exclude"`
+	Auto     bool  `json:"auto"`
+	ZeroCopy bool  `json:"zero_copy"`
+	Exclude  []int `json:"exclude"`
+	Allow    []int `json:"allow"`
 }
 
 type ACMEConfig struct {
@@ -55,20 +57,49 @@ type ACMEConfig struct {
 	CacheDir string `json:"cache_dir"`
 }
 
+type HSTSConfig struct {
+	Enabled           bool `json:"enabled"`
+	MaxAge            int  `json:"max_age"`
+	IncludeSubdomains bool `json:"include_subdomains"`
+}
+
 type Config struct {
-	PollSeconds    int         `json:"poll_seconds"`
-	GracePolls     int         `json:"grace_polls"`
-	CertConfigPath string      `json:"cert_config_path"`
-	CertHost       string      `json:"cert_host"`
-	FallbackSelf   *bool       `json:"fallback_selfsigned"`
-	SelfDir        string      `json:"selfsigned_dir"`
-	IdleSeconds    int         `json:"idle_seconds"`
-	ACME           ACMEConfig  `json:"acme"`
-	HTTPSAuto      *bool       `json:"https_auto"`    // Default: true (Zero-config auto HTTP discovery & +1 upgrade)
-	HTTPSOffset    int         `json:"https_offset"`  // Default: 1 (e.g. 8080 -> 8081)
-	HTTPSExclude   []int       `json:"https_exclude"` // Ports excluded from auto HTTPS upgrade
-	HTTPS          []HTTPSPort `json:"https"`          // Explicit custom rules (optional overrides)
-	Relay          RelayCfg    `json:"relay"`
+	PollSeconds             int         `json:"poll_seconds"`
+	GracePolls              int         `json:"grace_polls"`
+	CertConfigPath          string      `json:"cert_config_path"`
+	CertHost                string      `json:"cert_host"`
+	FallbackSelf            *bool       `json:"fallback_selfsigned"`
+	SelfDir                 string      `json:"selfsigned_dir"`
+	IdleSeconds             int         `json:"idle_seconds"`
+	ACME                    ACMEConfig  `json:"acme"`
+	HSTS                    HSTSConfig  `json:"hsts"`
+	HTTPSAuto               *bool       `json:"https_auto"`    // Default: true (Zero-config auto HTTP discovery & +1 upgrade)
+	HTTPSOffset             int         `json:"https_offset"`  // Default: 1 (e.g. 8080 -> 8081)
+	HTTPSExclude            []int       `json:"https_exclude"` // Ports excluded from auto HTTPS upgrade
+	HTTPSAllow              []int       `json:"https_allow"`   // Optional whitelist for auto HTTPS
+	HTTPS                   []HTTPSPort `json:"https"`         // Explicit custom rules (optional overrides)
+	Relay                   RelayCfg    `json:"relay"`
+	MaxConnsPerListener     int         `json:"max_conns_per_listener"`
+	SocketPath              string      `json:"socket_path"`
+	OverrideDefaultExcludes bool        `json:"override_default_excludes"`
+}
+
+func unionPorts(base []int, extra []int) []int {
+	seen := make(map[int]bool, len(base)+len(extra))
+	var res []int
+	for _, p := range base {
+		if !seen[p] {
+			seen[p] = true
+			res = append(res, p)
+		}
+	}
+	for _, p := range extra {
+		if !seen[p] {
+			seen[p] = true
+			res = append(res, p)
+		}
+	}
+	return res
 }
 
 // DefaultConfigText provides a streamlined JSON template for first-time setup
@@ -77,11 +108,12 @@ func DefaultConfigText() string {
   "cert_host": "nas.local",
   "relay": {
     "auto": true,
+    "zero_copy": false,
     "exclude": [22, 53]
   },
   "https_auto": true,
   "https_exclude": [22, 53]
- }
+}
 `
 }
 
@@ -116,27 +148,29 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("invalid config path %q", path)
 	}
 
+	// #nosec G304 - cleanPath is validated against traversal and cleaned
 	b, err := os.ReadFile(cleanPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			dir := filepath.Dir(cleanPath)
-			if dir != "." && dir != "" {
-				if e := os.MkdirAll(dir, 0o750); e != nil {
-					return nil, fmt.Errorf("failed to create config directory %s: %w", dir, e)
+			if dir != "" && dir != "." {
+				if err := os.MkdirAll(dir, 0o750); err != nil {
+					return nil, fmt.Errorf("failed to create config directory %q: %w", dir, err)
 				}
 			}
-			if e := os.WriteFile(cleanPath, []byte(DefaultConfigText()), 0o600); e != nil {
-				return nil, fmt.Errorf("failed to write default config to %s: %w", cleanPath, e)
+			defText := DefaultConfigText()
+			if err := os.WriteFile(cleanPath, []byte(defText), 0o600); err != nil {
+				return nil, fmt.Errorf("failed to create default config %q: %w", cleanPath, err)
 			}
-			b = []byte(DefaultConfigText())
+			b = []byte(defText)
 		} else {
-			return nil, fmt.Errorf("read config %s: %w", cleanPath, err)
+			return nil, err
 		}
 	}
 
 	var cfg Config
 	if err := json.Unmarshal(b, &cfg); err != nil {
-		return nil, fmt.Errorf("parse config %s: %w", cleanPath, err)
+		return nil, fmt.Errorf("failed to parse config %q: %w", cleanPath, err)
 	}
 
 	if cfg.PollSeconds <= 0 {
@@ -151,17 +185,16 @@ func LoadConfig(path string) (*Config, error) {
 	if cfg.SelfDir == "" {
 		cfg.SelfDir = "/etc/nasconnplus/tls"
 	}
-	if cfg.FallbackSelf == nil {
-		trueVal := true
-		cfg.FallbackSelf = &trueVal
+	if cfg.ACME.CacheDir == "" {
+		cfg.ACME.CacheDir = "/etc/nasconnplus/acme_cache"
 	}
 	if cfg.IdleSeconds <= 0 {
 		cfg.IdleSeconds = 900
 	}
-	if cfg.ACME.CacheDir == "" {
-		cfg.ACME.CacheDir = "/etc/nasconnplus/acme_cache"
+	if cfg.FallbackSelf == nil {
+		trueVal := true
+		cfg.FallbackSelf = &trueVal
 	}
-
 	if cfg.HTTPSAuto == nil {
 		trueVal := true
 		cfg.HTTPSAuto = &trueVal
@@ -169,12 +202,23 @@ func LoadConfig(path string) (*Config, error) {
 	if cfg.HTTPSOffset <= 0 {
 		cfg.HTTPSOffset = 1
 	}
-
-	if cfg.Relay.Exclude == nil {
-		cfg.Relay.Exclude = append([]int(nil), DefaultExcludePorts...)
+	if cfg.MaxConnsPerListener <= 0 {
+		cfg.MaxConnsPerListener = 2048
 	}
-	if cfg.HTTPSExclude == nil {
-		cfg.HTTPSExclude = append([]int(nil), DefaultExcludePorts...)
+	if cfg.HSTS.Enabled && cfg.HSTS.MaxAge <= 0 {
+		cfg.HSTS.MaxAge = 31536000
+	}
+
+	if !cfg.OverrideDefaultExcludes {
+		cfg.Relay.Exclude = unionPorts(DefaultExcludePorts, cfg.Relay.Exclude)
+		cfg.HTTPSExclude = unionPorts(DefaultExcludePorts, cfg.HTTPSExclude)
+	} else {
+		if cfg.Relay.Exclude == nil {
+			cfg.Relay.Exclude = []int{}
+		}
+		if cfg.HTTPSExclude == nil {
+			cfg.HTTPSExclude = []int{}
+		}
 	}
 
 	seenHTTPS := map[int]string{}
@@ -191,6 +235,21 @@ func LoadConfig(path string) (*Config, error) {
 	for _, e := range cfg.Relay.Exclude {
 		if e <= 0 || e > 65535 {
 			return nil, fmt.Errorf("invalid relay exclude port: %d (must be 1-65535)", e)
+		}
+	}
+	for _, e := range cfg.HTTPSExclude {
+		if e <= 0 || e > 65535 {
+			return nil, fmt.Errorf("invalid https exclude port: %d (must be 1-65535)", e)
+		}
+	}
+	for _, a := range cfg.Relay.Allow {
+		if a <= 0 || a > 65535 {
+			return nil, fmt.Errorf("invalid relay allow port: %d (must be 1-65535)", a)
+		}
+	}
+	for _, a := range cfg.HTTPSAllow {
+		if a <= 0 || a > 65535 {
+			return nil, fmt.Errorf("invalid https allow port: %d (must be 1-65535)", a)
 		}
 	}
 

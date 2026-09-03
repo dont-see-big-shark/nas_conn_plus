@@ -33,18 +33,18 @@ func newBytePool() *bytePool {
 		pool: sync.Pool{
 			New: func() interface{} {
 				b := make([]byte, 32*1024)
-				return b
+				return &b
 			},
 		},
 	}
 }
 
 func (p *bytePool) Get() []byte {
-	return p.pool.Get().([]byte)
+	return *p.pool.Get().(*[]byte)
 }
 
 func (p *bytePool) Put(b []byte) {
-	p.pool.Put(b)
+	p.pool.Put(&b)
 }
 
 type Service struct {
@@ -58,6 +58,9 @@ type Service struct {
 	mu        sync.Mutex
 	listeners map[string]*listenerState // key: kind:port
 	missing   map[string]int
+
+	warnMu         sync.Mutex
+	warnedConflict map[string]time.Time
 }
 
 func key(kind string, port int) string {
@@ -67,12 +70,13 @@ func key(kind string, port int) string {
 // NewService initializes the proxy service with optimized transport and buffer pooling
 func NewService(cfg *config.Config, log *logger.Logger, certs *cert.Manager) *Service {
 	s := &Service{
-		cfg:        cfg,
-		log:        log,
-		certs:      certs,
-		bufferPool: newBytePool(),
-		listeners:  make(map[string]*listenerState),
-		missing:    make(map[string]int),
+		cfg:            cfg,
+		log:            log,
+		certs:          certs,
+		bufferPool:     newBytePool(),
+		listeners:      make(map[string]*listenerState),
+		missing:        make(map[string]int),
+		warnedConflict: make(map[string]time.Time),
 	}
 
 	// High performance connection pooling: tuned for NAS low-memory devices
@@ -126,6 +130,30 @@ func (s *Service) isExcluded(port int) bool {
 		}
 	}
 	return false
+}
+
+func (s *Service) isRelayAllowed(port int) bool {
+	if len(s.cfg.Relay.Allow) > 0 {
+		for _, a := range s.cfg.Relay.Allow {
+			if a == port {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+
+func (s *Service) isHTTPSAllowed(port int) bool {
+	if len(s.cfg.HTTPSAllow) > 0 {
+		for _, a := range s.cfg.HTTPSAllow {
+			if a == port {
+				return true
+			}
+		}
+		return false
+	}
+	return true
 }
 
 func (s *Service) isOurListenerPortLocked(port int) bool {
@@ -210,19 +238,19 @@ func (s *Service) Reconcile(res *scanner.Result) {
 		allActivePorts := make(map[int]bool)
 		for port := range res.V4Wild {
 			// CRITICAL: Never treat our own listener ports as new HTTP targets to upgrade!
-			if !s.isOurListenerPortLocked(port) && !s.isExcluded(port) {
+			if !s.isOurListenerPortLocked(port) && !s.isExcluded(port) && s.isHTTPSAllowed(port) {
 				allActivePorts[port] = true
 			}
 		}
 		for port := range res.V6Any {
 			// CRITICAL: Never treat our own listener ports as new HTTP targets to upgrade!
-			if !s.isOurListenerPortLocked(port) && !s.isExcluded(port) {
+			if !s.isOurListenerPortLocked(port) && !s.isExcluded(port) && s.isHTTPSAllowed(port) {
 				allActivePorts[port] = true
 			}
 		}
 
 		for port := range allActivePorts {
-			if explicitBackends[port] {
+			if explicitBackends[port] || !s.isHTTPSAllowed(port) {
 				continue
 			}
 
@@ -270,7 +298,7 @@ func (s *Service) Reconcile(res *scanner.Result) {
 	// 3. Relay: auto-mirror v4-only ports to IPv6
 	if s.cfg.Relay.Auto {
 		for port := range res.V4Wild {
-			if s.isExcluded(port) || res.V6Others[port] {
+			if s.isExcluded(port) || !s.isRelayAllowed(port) || res.V6Others[port] {
 				continue
 			}
 			// Do not relay our own listener ports
@@ -296,6 +324,9 @@ func (s *Service) Reconcile(res *scanner.Result) {
 		if st := s.tryListen(w); st != nil {
 			s.listeners[k] = st
 			s.missing[k] = 0
+			s.warnMu.Lock()
+			delete(s.warnedConflict, k)
+			s.warnMu.Unlock()
 			s.log.Add("%s: %s -> 127.0.0.1:%d", w.kind, s.addrOf(w.kind, w.port), w.backend)
 
 			if w.kind == "https" {
@@ -311,14 +342,35 @@ func (s *Service) Reconcile(res *scanner.Result) {
 				backend:  w.backend,
 				conflict: true,
 			}
-			s.log.Warn("%s: cannot listen %s (port occupied, retrying)", w.name, s.addrOf(w.kind, w.port))
+			s.warnMu.Lock()
+			lastWarn, exists := s.warnedConflict[k]
+			now := time.Now()
+			shouldWarn := !exists || now.Sub(lastWarn) > 60*time.Second
+			if shouldWarn {
+				s.warnedConflict[k] = now
+			}
+			s.warnMu.Unlock()
+
+			if shouldWarn {
+				s.log.Warn("%s: cannot listen %s (port occupied, retrying)", w.name, s.addrOf(w.kind, w.port))
+			}
 		}
 	}
 
 	// 3. Maintain and garbage collect listeners
 	for k, st := range s.listeners {
-		w, wantIt := wants[k]
 		port := st.port
+
+		// Relay Handover: native dual-stack listening detected from original backend -> immediate yield!
+		if st.kind == "relay" && res.V6Others[port] {
+			s.log.Info("native dual-stack detected on :%d, yielding listener", port)
+			s.stopListener(st)
+			delete(s.listeners, k)
+			delete(s.missing, k)
+			continue
+		}
+
+		w, wantIt := wants[k]
 
 		if !wantIt {
 			if st.conflict {
@@ -341,6 +393,9 @@ func (s *Service) Reconcile(res *scanner.Result) {
 			if st2 := s.tryListen(w); st2 != nil {
 				s.listeners[k] = st2
 				s.missing[k] = 0
+				s.warnMu.Lock()
+				delete(s.warnedConflict, k)
+				s.warnMu.Unlock()
 				s.log.Add("%s: %s -> 127.0.0.1:%d (conflict resolved)", w.kind, s.addrOf(w.kind, w.port), w.backend)
 				if w.kind == "https" {
 					s.startHTTPServer(st2, w)
@@ -348,15 +403,6 @@ func (s *Service) Reconcile(res *scanner.Result) {
 					go s.acceptRelayLoop(st2)
 				}
 			}
-			continue
-		}
-
-		// Relay Handover: native dual-stack listening detected from original backend
-		if st.kind == "relay" && res.V6Others[port] {
-			s.log.Info("native dual-stack detected on :%d, yielding listener", port)
-			s.stopListener(st)
-			delete(s.listeners, k)
-			delete(s.missing, k)
 			continue
 		}
 
@@ -383,6 +429,7 @@ func (s *Service) startHTTPServer(st *listenerState, w want) {
 			}
 		},
 		ErrorHandler: func(rw http.ResponseWriter, req *http.Request, err error) {
+			st.errorCount.Add(1)
 			s.log.Warn("HTTPS %s proxy error: %v", w.name, err)
 			rw.WriteHeader(http.StatusBadGateway)
 		},
@@ -393,6 +440,21 @@ func (s *Service) startHTTPServer(st *listenerState, w want) {
 		st.activeConn.Add(1)
 		st.totalConn.Add(1)
 		defer st.activeConn.Add(-1)
+
+		if s.cfg.HSTS.Enabled {
+			host := req.Host
+			if h, _, err := net.SplitHostPort(host); err == nil {
+				host = h
+			}
+			// RFC 6797: do not apply HSTS to bare IP addresses
+			if net.ParseIP(host) == nil && s.certs != nil && s.certs.Current() != nil {
+				hstsVal := fmt.Sprintf("max-age=%d", s.cfg.HSTS.MaxAge)
+				if s.cfg.HSTS.IncludeSubdomains {
+					hstsVal += "; includeSubDomains"
+				}
+				rw.Header().Set("Strict-Transport-Security", hstsVal)
+			}
+		}
 
 		crw := &countingResponseWriter{ResponseWriter: rw, written: &st.bytesOut}
 		if req.Body != nil {
@@ -413,26 +475,24 @@ func (s *Service) startHTTPServer(st *listenerState, w want) {
 	}
 	st.httpServer = server
 
-	go func() {
-		if err := server.ServeTLS(st.ln, "", ""); err != nil && err != http.ErrServerClosed {
-			s.log.Warn("HTTPS %s server closed: %v", w.name, err)
-		}
-	}()
+	if st.ln != nil {
+		go func() {
+			if err := server.ServeTLS(st.ln, "", ""); err != nil && err != http.ErrServerClosed {
+				s.log.Warn("HTTPS %s server closed: %v", w.name, err)
+			}
+		}()
+	}
 }
 
 func (s *Service) acceptRelayLoop(st *listenerState) {
 	dialProxy := tcpproxy.To(fmt.Sprintf("127.0.0.1:%d", st.backend))
 	dialProxy.DialTimeout = 10 * time.Second
 	dialProxy.KeepAlivePeriod = 30 * time.Second
-	// Note: max concurrent relay connections are bounded by OS fd limits
-	// (LimitNOFILE) and the caller-side accept throttling (tempDelay backoff).
-	// For additional hard limiting, wrap st.ln with netutil.LimitListener(1024)
-	// at tryListen time; here we rely on graceful backpressure via the
-	// dialProxy's internal limits and activeConn tracking.
 
 	var lastErrTime time.Time
 	var errCount int
 	dialProxy.OnDialError = func(src net.Conn, err error) {
+		st.errorCount.Add(1)
 		now := time.Now()
 		if now.Sub(lastErrTime) > 5*time.Second {
 			s.log.Warn("relay %s dial error: %v (suppressed %d occurrences)", st.name, err, errCount)
@@ -475,15 +535,43 @@ func (s *Service) acceptRelayLoop(st *listenerState) {
 		st.activeConn.Add(1)
 		st.totalConn.Add(1)
 
-		cConn := &countingConn{
-			Conn:   conn,
-			active: &st.activeConn,
-			in:     &st.bytesIn,
-			out:    &st.bytesOut,
+		if s.cfg.Relay.ZeroCopy {
+			zcConn := &activeCountingConn{
+				Conn:   conn,
+				active: &st.activeConn,
+			}
+			go dialProxy.HandleConn(zcConn)
+		} else {
+			cConn := &countingConn{
+				Conn:   conn,
+				active: &st.activeConn,
+				in:     &st.bytesIn,
+				out:    &st.bytesOut,
+			}
+			go dialProxy.HandleConn(cConn)
 		}
-
-		go dialProxy.HandleConn(cConn)
 	}
+}
+
+// activeCountingConn manages connection lifecycle and enables direct Linux kernel splice(2) zero-copy
+type activeCountingConn struct {
+	net.Conn
+	active *atomic.Int64
+	once   sync.Once
+}
+
+func (c *activeCountingConn) UnderlyingConn() net.Conn {
+	return c.Conn
+}
+
+func (c *activeCountingConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(func() {
+		if c.active != nil {
+			c.active.Add(-1)
+		}
+	})
+	return err
 }
 
 // countingConn tracks bytes in/out and implements net.Conn, UnderlyingConn, and TCP extension interfaces
