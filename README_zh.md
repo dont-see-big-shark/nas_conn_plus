@@ -8,7 +8,7 @@
 [![CI](https://github.com/dont-see-big-shark/nas_conn_plus/actions/workflows/ci.yml/badge.svg)](https://github.com/dont-see-big-shark/nas_conn_plus/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/Coverage-82.1%25-brightgreen.svg?logo=codecov)](https://github.com/dont-see-big-shark/nas_conn_plus)
 [![Go Report Card](https://goreportcard.com/badge/github.com/dont-see-big-shark/nas_conn_plus)](https://goreportcard.com/report/github.com/dont-see-big-shark/nas_conn_plus)
-[![Version](https://img.shields.io/badge/Version-v1.0.0-3388ff?logo=github)](https://github.com/dont-see-big-shark/nas_conn_plus/releases)
+[![Latest Release](https://img.shields.io/github/v/release/dont-see-big-shark/nas_conn_plus?logo=github&color=3388ff)](https://github.com/dont-see-big-shark/nas_conn_plus/releases)
 [![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.22-00ADD8?logo=go)](https://golang.org)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20NAS%20%7C%20Docker-lightgrey)](https://github.com/dont-see-big-shark/nas_conn_plus)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](deploy/Dockerfile)
