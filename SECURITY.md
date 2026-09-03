@@ -17,15 +17,17 @@
 
 请通过以下方式私下与维护团队联系：
 
-- **联系邮箱**：可在维护者 GitHub 个人主页查找安全联系方式或发送邮件至相关联络地址。
-- **GitHub 私密漏洞报告 (Private Vulnerability Reporting)**：如果您拥有权限，建议直接在仓库页面的 `Security` -> `Advisories` -> `Report a vulnerability` 中创建私密报告。
+- **联系邮箱**：通过维护者 GitHub 个人主页查找安全联系方式。
+- **GitHub 私密漏洞报告 (Private Vulnerability Reporting)**：直接在仓库页面的 `Security` -> `Advisories` -> `Report a vulnerability` 中创建私密报告 (已启用)。
 
 ### 报告时请包含以下信息：
 1. 漏洞类型及受影响的模块（如 TLS 握手、HTTP 反代头注入、内核网络解析、IPC 通信）。
 2. 复现步骤、POC 代码或最小复现配置。
 3. 漏洞可能造成的影响评估（如信息泄露、未授权端口暴露、拒绝服务 DoS）。
+4. 受影响版本与复现环境 (Go 版本、内核、容器/宿主机)。
 
-我们承诺在收到报告后的 **48 小时内** 给出初步响应，并在确认漏洞后尽快完成修复并发布安全更新版本。
+我们承诺在收到报告后的 **48 小时内** 给出初步响应，并在确认漏洞后 **7 天内** 发布修复并在 `CHANGELOG.md` 中记录 CVE 编号。
+我们遵循协调披露 (Coordinated Disclosure)，请给予至少 90 天的修复窗口期后再公开细节。
 
 ---
 
