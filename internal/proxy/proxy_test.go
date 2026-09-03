@@ -784,4 +784,95 @@ func TestProxy_CountingReadCloser_And_ResponseWriter(t *testing.T) {
 	}
 }
 
+func TestProxy_CountingResponseWriter_PreservesHTTPInterfaces(t *testing.T) {
+	var bytesOut atomic.Uint64
+	rec := httptest.NewRecorder()
+	crw := &countingResponseWriter{ResponseWriter: rec, written: &bytesOut}
+
+	// Compile-time assertions: the wrapper must keep satisfying the optional
+	// interfaces httputil.ReverseProxy relies on for WebSocket upgrades and
+	// streaming responses.
+	var _ http.Flusher = crw
+	var _ http.Hijacker = crw
+	var _ http.CloseNotifier = crw
+
+	// Runtime: delegate to the underlying writer. httptest.ResponseRecorder
+	// supports Flush but not Hijack, so Hijack must surface an error instead
+	// of panicking.
+	crw.Flush()
+	if _, _, err := crw.Hijack(); err == nil {
+		t.Error("expected Hijack() to fail when underlying writer lacks http.Hijacker")
+	}
+}
+
+func TestProxy_Relay_PersistsAcrossReconciles(t *testing.T) {
+	// Regression test: a relay listener must NOT be recycled as "backend down"
+	// just because its own [::]:port now appears as one of our listeners.
+	probe, err := listenV6Only(0)
+	if err != nil {
+		t.Skipf("IPv6 unavailable: %v", err)
+	}
+	_ = probe.Close()
+
+	// Acquire a free port to act as the v4-only backend.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	backendPort := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+
+	tempDir := t.TempDir()
+	autoTrue := true
+	autoFalse := false
+	cfg := &config.Config{
+		PollSeconds: 1,
+		GracePolls:  2,
+		HTTPSAuto:   &autoFalse,
+		Relay:       config.RelayCfg{Auto: autoTrue},
+	}
+	cm := cert.NewManager("", "localhost", tempDir, true, false, "", "", "")
+	_ = cm.Refresh()
+	lg := logger.New()
+	srv := NewService(cfg, lg, cm)
+	defer srv.Shutdown()
+
+	// 1st reconcile creates the relay listener.
+	srv.Reconcile(&scanner.Result{
+		V4Wild:   map[int]bool{backendPort: true},
+		V6Any:    map[int]bool{},
+		V6Others: map[int]bool{},
+		PIDs:     map[int]int{},
+		Names:    map[int]string{},
+	})
+
+	// Subsequent scans report our own [::]:backendPort relay as an active
+	// V6Any socket, exactly like the real procfs scanner would.
+	for i := 0; i < 20; i++ {
+		srv.Reconcile(&scanner.Result{
+			V4Wild:   map[int]bool{backendPort: true},
+			V6Any:    map[int]bool{backendPort: true},
+			V6Others: map[int]bool{},
+			PIDs:     map[int]int{backendPort: 9999},
+			Names:    map[int]string{backendPort: "nasconnplus"},
+		})
+	}
+
+	relayKey := fmt.Sprintf("relay:%d", backendPort)
+	srv.mu.Lock()
+	st, ok := srv.listeners[relayKey]
+	missing := srv.missing[relayKey]
+	srv.mu.Unlock()
+
+	if !ok {
+		t.Fatalf("relay listener %s was recycled (flap bug)", relayKey)
+	}
+	if st.conflict {
+		t.Fatalf("relay listener %s ended up in conflict state", relayKey)
+	}
+	if missing >= cfg.GracePolls {
+		t.Fatalf("relay listener %s accumulating teardown polls (missing=%d)", relayKey, missing)
+	}
+}
+
 
