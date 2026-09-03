@@ -67,14 +67,12 @@ func NewManager(cfgPath, host, selfDir string, fallback bool, acmeEnabled bool, 
 
 // GetCertificate implements dynamic certificate resolution for tls.Config
 func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-	// 1. If ACME is active, delegate to autocert manager
 	if m.acmeEnabled && m.acmeMgr != nil {
 		if cert, err := m.acmeMgr.GetCertificate(hello); err == nil && cert != nil {
 			return cert, nil
 		}
 	}
 
-	// 2. Return currently loaded certificate (from config file or self-signed)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -103,26 +101,37 @@ func (m *Manager) certFingerprint(certFile, keyFile string) string {
 		return fmt.Sprintf("file:%s:%d:%d", certFile, cStat.ModTime().UnixNano(), kStat.ModTime().UnixNano())
 	}
 	h := sha256.Sum256(data)
-	return fmt.Sprintf("file:%s:%x:%d", certFile, h[:8], cStat.ModTime().UnixNano())
+	return fmt.Sprintf("file:%s:%x:%d:%d", certFile, h[:8], cStat.ModTime().UnixNano(), kStat.ModTime().UnixNano())
 }
 
 // Refresh checks whether the certificate needs to be reloaded from disk or regenerated
+// It uses copy-on-write: snapshot config under RLock, do IO unlocked, then Lock to swap
 func (m *Manager) Refresh() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	cfgPath := m.cfgPath
+	host := m.host
+	selfDir := m.selfDir
+	fallback := m.fallback
+	acmeEnabled := m.acmeEnabled
+	acmeMgr := m.acmeMgr
+	loadedAtSnap := m.loadedAt
+	m.mu.RUnlock()
 
 	var lastErr error
 
-	// Try loading from cert_config_path if provided
-	if m.cfgPath != "" {
-		certFile, keyFile, err := m.resolveCertFiles()
+	if cfgPath != "" {
+		certFile, keyFile, err := m.resolveCertFilesWith(cfgPath, host)
 		if err == nil {
 			fp := m.certFingerprint(certFile, keyFile)
-			if fp != m.loadedAt {
+			if fp != loadedAtSnap {
 				kc, kerr := tls.LoadX509KeyPair(certFile, keyFile)
 				if kerr == nil {
-					m.cur = &kc
-					m.loadedAt = fp
+					m.mu.Lock()
+					if fp != m.loadedAt {
+						m.cur = &kc
+						m.loadedAt = fp
+					}
+					m.mu.Unlock()
 					return nil
 				}
 				lastErr = fmt.Errorf("load keypair from %s: %w", certFile, kerr)
@@ -134,16 +143,23 @@ func (m *Manager) Refresh() error {
 		}
 	}
 
-	// Fallback to self-signed certificate if allowed (even if ACME is enabled, as initial bootstrap)
-	if m.fallback {
-		sc, err := m.loadOrCreateSelfSigned()
+	if fallback {
+		sc, newDir, err := m.loadOrCreateSelfSignedWith(selfDir, host)
 		if err == nil && sc != nil {
-			fp := "self:" + m.host
+			fp := "self:" + host
+			m.mu.Lock()
 			if fp != m.loadedAt || m.cur == nil {
 				m.cur = sc
 				m.loadedAt = fp
+				if newDir != "" && newDir != m.selfDir {
+					m.selfDir = newDir
+				}
+			} else if newDir != "" && newDir != m.selfDir {
+				m.selfDir = newDir
 			}
-			if !m.acmeEnabled {
+			shouldReturn := !acmeEnabled
+			m.mu.Unlock()
+			if shouldReturn {
 				return nil
 			}
 		} else if err != nil {
@@ -151,12 +167,14 @@ func (m *Manager) Refresh() error {
 		}
 	}
 
-	// If ACME is enabled, we don't strictly require a static certificate
-	if m.acmeEnabled && m.acmeMgr != nil {
+	if acmeEnabled && acmeMgr != nil {
 		return nil
 	}
 
-	if m.cur != nil {
+	m.mu.RLock()
+	hasCur := m.cur != nil
+	m.mu.RUnlock()
+	if hasCur {
 		return nil
 	}
 
@@ -166,50 +184,65 @@ func (m *Manager) Refresh() error {
 	return lastErr
 }
 
-func (m *Manager) resolveCertFiles() (string, string, error) {
-	b, err := os.ReadFile(m.cfgPath)
+func (m *Manager) resolveCertFilesWith(cfgPath, host string) (string, string, error) {
+	b, err := os.ReadFile(cfgPath)
 	if err != nil {
 		return "", "", err
 	}
 
-	// Try parsing as JSON array of cert entries
 	var entries []CertEntry
 	if err := json.Unmarshal(b, &entries); err == nil && len(entries) > 0 {
-		for _, want := range []string{m.host, "fallback", "*"} {
+		for _, want := range []string{host, "fallback", "*"} {
 			for _, e := range entries {
 				if e.Host == want && e.Cert != "" && e.Key != "" {
 					return e.Cert, e.Key, nil
 				}
 			}
 		}
-		return "", "", fmt.Errorf("cert for host %q not found in %s", m.host, m.cfgPath)
+		return "", "", fmt.Errorf("cert for host %q not found in %s", host, cfgPath)
 	}
 
-	return "", "", fmt.Errorf("invalid cert config format in %s", m.cfgPath)
+	return "", "", fmt.Errorf("invalid cert config format in %s", cfgPath)
 }
 
-func (m *Manager) loadOrCreateSelfSigned() (*tls.Certificate, error) {
-	crtPath := filepath.Join(m.selfDir, "selfsigned.crt")
-	keyPath := filepath.Join(m.selfDir, "selfsigned.key")
+func (m *Manager) resolveCertFiles() (string, string, error) {
+	m.mu.RLock()
+	cfgPath := m.cfgPath
+	host := m.host
+	m.mu.RUnlock()
+	return m.resolveCertFilesWith(cfgPath, host)
+}
+
+func (m *Manager) loadOrCreateSelfSignedWith(selfDir, host string) (*tls.Certificate, string, error) {
+	crtPath := filepath.Join(selfDir, "selfsigned.crt")
+	keyPath := filepath.Join(selfDir, "selfsigned.key")
 
 	if kc, err := tls.LoadX509KeyPair(crtPath, keyPath); err == nil {
-		return &kc, nil
+		return &kc, "", nil
 	}
 
-	if err := os.MkdirAll(m.selfDir, 0o700); err != nil {
+	actualDir := selfDir
+	if err := os.MkdirAll(selfDir, 0o700); err != nil {
 		localDir := "./tls"
 		if err2 := os.MkdirAll(localDir, 0o700); err2 == nil {
-			m.selfDir = localDir
-			crtPath = filepath.Join(m.selfDir, "selfsigned.crt")
-			keyPath = filepath.Join(m.selfDir, "selfsigned.key")
+			actualDir = localDir
+			crtPath = filepath.Join(actualDir, "selfsigned.crt")
+			keyPath = filepath.Join(actualDir, "selfsigned.key")
+			if kc, err := tls.LoadX509KeyPair(crtPath, keyPath); err == nil {
+				return &kc, actualDir, nil
+			}
 		} else {
-			return nil, fmt.Errorf("mkdir %s: %w", m.selfDir, err)
+			return nil, "", fmt.Errorf("mkdir %s: %w", selfDir, err)
+		}
+	} else {
+		if kc, err := tls.LoadX509KeyPair(crtPath, keyPath); err == nil {
+			return &kc, "", nil
 		}
 	}
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, fmt.Errorf("generate ECDSA key: %w", err)
+		return nil, "", fmt.Errorf("generate ECDSA key: %w", err)
 	}
 
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
@@ -219,21 +252,21 @@ func (m *Manager) loadOrCreateSelfSigned() (*tls.Certificate, error) {
 	}
 
 	var ips []net.IP
-	if ip := net.ParseIP(m.host); ip != nil {
+	if ip := net.ParseIP(host); ip != nil {
 		ips = append(ips, ip)
 	}
 	ips = append(ips, net.ParseIP("127.0.0.1"), net.ParseIP("::1"))
 
 	dnsNames := []string{"localhost"}
-	if net.ParseIP(m.host) == nil && m.host != "" {
-		dnsNames = append(dnsNames, m.host)
+	if net.ParseIP(host) == nil && host != "" {
+		dnsNames = append(dnsNames, host)
 	}
 
 	tmpl := x509.Certificate{
 		SerialNumber:          serialNumber,
-		Subject:               pkix.Name{CommonName: m.host, Organization: []string{"nasconn+ self-signed"}},
+		Subject:               pkix.Name{CommonName: host, Organization: []string{"nasconn+ self-signed"}},
 		NotBefore:             time.Now().Add(-1 * time.Hour),
-		NotAfter:              time.Now().AddDate(10, 0, 0), // 10 years validity
+		NotAfter:              time.Now().Add(825 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
@@ -244,37 +277,54 @@ func (m *Manager) loadOrCreateSelfSigned() (*tls.Certificate, error) {
 
 	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
 	if err != nil {
-		return nil, fmt.Errorf("create certificate: %w", err)
+		return nil, "", fmt.Errorf("create certificate: %w", err)
 	}
 
 	crtOut, err := os.OpenFile(crtPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := pem.Encode(crtOut, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
 		crtOut.Close()
-		return nil, fmt.Errorf("encode certificate: %w", err)
+		return nil, "", fmt.Errorf("encode certificate: %w", err)
 	}
 	crtOut.Close()
 
 	kb, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	keyOut, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: kb}); err != nil {
 		keyOut.Close()
-		return nil, fmt.Errorf("encode private key: %w", err)
+		return nil, "", fmt.Errorf("encode private key: %w", err)
 	}
 	keyOut.Close()
 
 	kc, err := tls.LoadX509KeyPair(crtPath, keyPath)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return &kc, nil
+	if actualDir != selfDir {
+		return &kc, actualDir, nil
+	}
+	return &kc, "", nil
+}
+
+func (m *Manager) loadOrCreateSelfSigned() (*tls.Certificate, error) {
+	m.mu.RLock()
+	selfDir := m.selfDir
+	host := m.host
+	m.mu.RUnlock()
+	cert, newDir, err := m.loadOrCreateSelfSignedWith(selfDir, host)
+	if err == nil && newDir != "" {
+		m.mu.Lock()
+		m.selfDir = newDir
+		m.mu.Unlock()
+	}
+	return cert, err
 }

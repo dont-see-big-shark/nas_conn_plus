@@ -51,7 +51,7 @@ func IsHTTPService(port int, timeout time.Duration) bool {
 		return false
 	}
 
-	buf := make([]byte, 512)
+	buf := make([]byte, 4096)
 	n, err := conn.Read(buf)
 	if err != nil || n < 4 {
 		return false

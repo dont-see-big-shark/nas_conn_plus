@@ -222,6 +222,11 @@ func buildInodeToPIDMap() map[string]procInfo {
 	return inodes
 }
 
+// parseProcNetFile parses /proc/net/tcp{,6} and populates res.
+// P1-2 fix: uses socketPID directly (not res.PIDs[port] which would be stale from
+// the opposite address family pass) and respects selfInodes so our own [::] sockets
+// never set V6Others. On missingInodes double-parse, caller provides a fresh
+// newResult() so stale V6Others cannot persist.
 func parseProcNetFile(path string, isV6 bool, res *Result, mypid int, selfInodes map[string]bool, inodeMap map[string]procInfo, missingInodes *bool) error {
 	f, err := os.Open(path)
 	if err != nil {

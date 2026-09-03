@@ -5,7 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=root
+User=nasconnplus
+Group=nasconnplus
 # Adjust the binary path if installed elsewhere
 ExecStart=/usr/local/bin/nasconnplus -c /etc/nasconnplus/config.json
 Restart=always
@@ -17,23 +18,37 @@ StartLimitBurst=5
 LimitNOFILE=16384
 LimitNPROC=16384
 TasksMax=1024
+MemoryMax=256M
+RuntimeDirectory=nasconnplus
+RuntimeDirectoryMode=0755
 
 # Security sandbox
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/etc/nasconnplus /run /tmp
+ReadWritePaths=/etc/nasconnplus /run
 ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 SystemCallFilter=@system-service
 SystemCallArchitectures=native
 
 # Ambient capabilities for binding low ports and inspecting socket inodes
+# CAP_NET_BIND_SERVICE only; CAP_SYS_PTRACE only needed if you want process names in -t/status.
+# To drop SYS_PTRACE entirely, remove it here and see scanner.go /proc/self/fd fallback.
 AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_SYS_PTRACE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SYS_PTRACE
 

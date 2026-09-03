@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -41,14 +42,32 @@ func Run() {
 	}
 
 	// Ergonomic subcommand support: `nasconnplus status`
-	if len(os.Args) > 1 && os.Args[1] == "status" {
-		*statusFlag = true
-		if len(os.Args) > 2 {
-			_ = flag.CommandLine.Parse(os.Args[2:])
+	// Handle `nasconnplus status`, `nasconnplus status -c x`, `nasconnplus -c x status`
+	// Filter literal "status" token and parse remaining flags properly, respecting -c value
+	args := os.Args[1:]
+	var filtered []string
+	statusFromArg := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "status" {
+			isValue := false
+			if i > 0 {
+				prev := args[i-1]
+				if prev == "-c" || prev == "-config" || prev == "--config" {
+					isValue = true
+				}
+			}
+			if !isValue {
+				statusFromArg = true
+				continue
+			}
 		}
-	} else {
-		flag.Parse()
+		filtered = append(filtered, arg)
 	}
+	if statusFromArg {
+		*statusFlag = true
+	}
+	_ = flag.CommandLine.Parse(filtered)
 
 	if *versionFlag {
 		fmt.Printf("nasconn+ v%s (built %s, %s/%s)\n", Version, BuildDate, runtime.GOOS, runtime.GOARCH)
@@ -57,28 +76,25 @@ func Run() {
 
 	log := logger.New()
 
-	// Status query mode: connects to running daemon via IPC Unix socket
 	if *statusFlag {
 		report, err := ipc.QueryStatus(ipc.DefaultSocketPath())
 		if err != nil {
 			log.Warn("%v", err)
-			os.Exit(1)
+			return
 		}
 		fmt.Println(ipc.RenderStatus(report))
 		return
 	}
 
-	// Diagnostic mode: run scan once and print result table
 	if *testFlag {
 		log.Banner(Version)
 		log.Info("Running network diagnostic scan...")
 		res, err := scanner.Scan()
 		if err != nil {
 			log.Warn("Diagnostic scan failed: %v", err)
-			os.Exit(1)
+			return
 		}
 
-		// Read exclusions from active config if available
 		var excludes []int
 		resolvedPath := config.ResolveConfigPath(*configPathFlag)
 		if cfg, err := config.LoadConfig(resolvedPath); err == nil {
@@ -101,12 +117,11 @@ func Run() {
 		return
 	}
 
-	// Load Configuration
 	resolvedPath := config.ResolveConfigPath(*configPathFlag)
 	cfg, err := config.LoadConfig(resolvedPath)
 	if err != nil {
 		log.Warn("Configuration error: %v", err)
-		os.Exit(1)
+		return
 	}
 
 	log.Banner(Version)
@@ -114,7 +129,6 @@ func Run() {
 	log.Info("Settings: poll=%ds, grace_polls=%d, https_rules=%d, relay_auto=%v",
 		cfg.PollSeconds, cfg.GracePolls, len(cfg.HTTPS), cfg.Relay.Auto)
 
-	// Initialize Certificate Manager
 	cm := cert.NewManager(
 		cfg.CertConfigPath,
 		cfg.CertHost,
@@ -135,11 +149,9 @@ func Run() {
 		}
 	}
 
-	// Initialize Proxy Service
 	srv := proxy.NewService(cfg, log, cm)
 	startTime := time.Now()
 
-	// Start IPC Status Server for `nasconnplus status` CLI ergonomics
 	ipcServer, err := ipc.StartServer(ipc.DefaultSocketPath(), func() ipc.StatusReport {
 		return ipc.StatusReport{
 			Version:       Version,
@@ -154,29 +166,36 @@ func Run() {
 		defer ipcServer.Close()
 	}
 
-	// Graceful Shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sig)
 
 	go func() {
-		<-sig
-		log.Info("Received termination signal, shutting down gracefully...")
-		if ipcServer != nil {
-			_ = ipcServer.Close()
+		select {
+		case <-sig:
+			log.Info("Received termination signal, shutting down gracefully...")
+			cancel()
+		case <-ctx.Done():
 		}
-		srv.Shutdown()
-		os.Exit(0)
 	}()
 
-	// Main Reconcile Loop
 	ticker := time.NewTicker(time.Duration(cfg.PollSeconds) * time.Second)
 	defer ticker.Stop()
 
-	// Initial scan immediately
 	runReconcile(log, cm, srv)
 
-	for range ticker.C {
-		runReconcile(log, cm, srv)
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info("Shutting down...")
+			srv.Shutdown()
+			return
+		case <-ticker.C:
+			runReconcile(log, cm, srv)
+		}
 	}
 }
 

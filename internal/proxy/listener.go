@@ -62,7 +62,10 @@ type want struct {
 	tls     bool
 }
 
-// listenV6Only creates a TCP listener bound specifically to IPv6 wildcard [::] with IPV6_V6ONLY=1
+// listenV6Only creates a TCP listener bound specifically to IPv6 wildcard [::] with IPV6_V6ONLY=1.
+// This ensures the relay socket does not also claim 0.0.0.0:* on hosts with
+// net.ipv6.bindv6only=0, avoiding spurious EADDRINUSE with HTTPS dual-stack
+// listeners and keeping relay/CAD distinct at the OS level.
 func listenV6Only(port int) (net.Listener, error) {
 	lc := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {

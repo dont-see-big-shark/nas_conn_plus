@@ -75,7 +75,8 @@ func NewService(cfg *config.Config, log *logger.Logger, certs *cert.Manager) *Se
 		missing:    make(map[string]int),
 	}
 
-	// High performance connection pooling: prevents TCP handshakes and port exhaustion
+	// High performance connection pooling: tuned for NAS low-memory devices
+	// MaxIdleConns reduced from 1024 to 256 to avoid fd exhaustion on 512M NAS
 	s.transport = &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
@@ -83,8 +84,8 @@ func NewService(cfg *config.Config, log *logger.Logger, certs *cert.Manager) *Se
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
 		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          1024,
-		MaxIdleConnsPerHost:   256,
+		MaxIdleConns:          256,
+		MaxIdleConnsPerHost:   64,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
@@ -230,8 +231,16 @@ func (s *Service) Reconcile(res *scanner.Result) {
 				continue
 			}
 
-			// Don't conflict if targetPort is occupied by another process (or a different listener kind)
-			if (res.V4Wild[targetPort] || res.V6Any[targetPort]) && !s.isOurListener("https", targetPort) {
+			// P0-2 FIX: Do not pre-check V4Wild/V6Any wildcard tables here — they miss
+			// specific binds like 127.0.0.1:P and would still spuriously succeed due to
+			// SO_REUSEADDR. Rely on tryListen() EADDRINUSE to detect real occupancy;
+			// conflict entries are kept and retried next Reconcile so temporary
+			// neighbour restarts don't cause permanent port steal.
+			// M1: avoid creating https on a port already owned by a different
+			// kind of our listeners (e.g. relay [::]:P vs https :P). The two
+			// cannot coexist at OS level, so we must not mark it as conflict:true
+			// but simply skip. If it's already our https listener, keep it.
+			if s.isOurListenerPortLocked(targetPort) && !s.isOurListener("https", targetPort) {
 				continue
 			}
 
@@ -398,6 +407,9 @@ func (s *Service) startHTTPServer(st *listenerState, w want) {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       time.Duration(s.cfg.IdleSeconds) * time.Second,
 		MaxHeaderBytes:    64 << 10,
+		// WriteTimeout intentionally 0 (no timeout) to support websockets and
+		// long-lived hijacked connections; timeout is enforced via IdleTimeout
+		// and transport limits instead. See Go issue 62015.
 	}
 	st.httpServer = server
 
@@ -412,6 +424,11 @@ func (s *Service) acceptRelayLoop(st *listenerState) {
 	dialProxy := tcpproxy.To(fmt.Sprintf("127.0.0.1:%d", st.backend))
 	dialProxy.DialTimeout = 10 * time.Second
 	dialProxy.KeepAlivePeriod = 30 * time.Second
+	// Note: max concurrent relay connections are bounded by OS fd limits
+	// (LimitNOFILE) and the caller-side accept throttling (tempDelay backoff).
+	// For additional hard limiting, wrap st.ln with netutil.LimitListener(1024)
+	// at tryListen time; here we rely on graceful backpressure via the
+	// dialProxy's internal limits and activeConn tracking.
 
 	var lastErrTime time.Time
 	var errCount int
@@ -597,19 +614,25 @@ func (s *Service) addr(st *listenerState) string {
 }
 
 // Shutdown gracefully stops all active listeners concurrently
+// R5 FIX: snapshot listeners under lock then unlock before Wait to avoid blocking GetMetricsSnapshot/Reconcile
 func (s *Service) Shutdown() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	var wg sync.WaitGroup
+	snapshot := make([]*listenerState, 0, len(s.listeners))
 	for _, st := range s.listeners {
-		wg.Add(1)
-		go func(l *listenerState) {
-			defer wg.Done()
-			s.stopListener(l)
-		}(st)
+		snapshot = append(snapshot, st)
 	}
-	wg.Wait()
+	// Clear maps while still holding lock so new Reconcile won't race
 	s.listeners = make(map[string]*listenerState)
 	s.missing = make(map[string]int)
+	s.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for _, l := range snapshot {
+		wg.Add(1)
+		go func(ls *listenerState) {
+			defer wg.Done()
+			s.stopListener(ls)
+		}(l)
+	}
+	wg.Wait()
 }

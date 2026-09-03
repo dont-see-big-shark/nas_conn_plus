@@ -81,7 +81,7 @@ func DefaultConfigText() string {
   },
   "https_auto": true,
   "https_exclude": [22, 53]
-}
+ }
 `
 }
 
@@ -89,13 +89,11 @@ func DefaultConfigText() string {
 // It avoids loading relative ./config.json from world-writable directories such as /tmp for security.
 func ResolveConfigPath(specified string) string {
 	if specified != "" {
-		return specified
+		return filepath.Clean(specified)
 	}
-	// Prefer system-wide config if present
 	if _, err := os.Stat(DefaultConfigPath); err == nil {
 		return DefaultConfigPath
 	}
-	// Only load local config if safe (not in /tmp or /var/tmp)
 	if _, err := os.Stat(LocalConfigPath); err == nil {
 		wd, err := os.Getwd()
 		if err == nil && !strings.HasPrefix(wd, "/tmp") && !strings.HasPrefix(wd, "/var/tmp") {
@@ -107,30 +105,40 @@ func ResolveConfigPath(specified string) string {
 
 // LoadConfig reads and parses the configuration file. If it doesn't exist, it creates a default one.
 func LoadConfig(path string) (*Config, error) {
-	b, err := os.ReadFile(path)
+	if strings.Contains(path, "..") {
+		return nil, fmt.Errorf("invalid config path %q: contains \"..\" traversal", path)
+	}
+	cleanPath := filepath.Clean(path)
+	if strings.Contains(cleanPath, "..") {
+		return nil, fmt.Errorf("invalid config path %q: contains \"..\" traversal", path)
+	}
+	if cleanPath == "." || cleanPath == "" {
+		return nil, fmt.Errorf("invalid config path %q", path)
+	}
+
+	b, err := os.ReadFile(cleanPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			dir := filepath.Dir(path)
+			dir := filepath.Dir(cleanPath)
 			if dir != "." && dir != "" {
-				if e := os.MkdirAll(dir, 0o755); e != nil {
+				if e := os.MkdirAll(dir, 0o750); e != nil {
 					return nil, fmt.Errorf("failed to create config directory %s: %w", dir, e)
 				}
 			}
-			if e := os.WriteFile(path, []byte(DefaultConfigText()), 0o644); e != nil {
-				return nil, fmt.Errorf("failed to write default config to %s: %w", path, e)
+			if e := os.WriteFile(cleanPath, []byte(DefaultConfigText()), 0o600); e != nil {
+				return nil, fmt.Errorf("failed to write default config to %s: %w", cleanPath, e)
 			}
 			b = []byte(DefaultConfigText())
 		} else {
-			return nil, fmt.Errorf("read config %s: %w", path, err)
+			return nil, fmt.Errorf("read config %s: %w", cleanPath, err)
 		}
 	}
 
 	var cfg Config
 	if err := json.Unmarshal(b, &cfg); err != nil {
-		return nil, fmt.Errorf("parse config %s: %w", path, err)
+		return nil, fmt.Errorf("parse config %s: %w", cleanPath, err)
 	}
 
-	// Apply defaults
 	if cfg.PollSeconds <= 0 {
 		cfg.PollSeconds = 5
 	}
@@ -154,7 +162,6 @@ func LoadConfig(path string) (*Config, error) {
 		cfg.ACME.CacheDir = "/etc/nasconnplus/acme_cache"
 	}
 
-	// HTTPS Auto Discovery defaults
 	if cfg.HTTPSAuto == nil {
 		trueVal := true
 		cfg.HTTPSAuto = &trueVal
@@ -163,7 +170,6 @@ func LoadConfig(path string) (*Config, error) {
 		cfg.HTTPSOffset = 1
 	}
 
-	// Exclude lists: if omitted in config, default to safe well-known ports
 	if cfg.Relay.Exclude == nil {
 		cfg.Relay.Exclude = append([]int(nil), DefaultExcludePorts...)
 	}
@@ -171,7 +177,6 @@ func LoadConfig(path string) (*Config, error) {
 		cfg.HTTPSExclude = append([]int(nil), DefaultExcludePorts...)
 	}
 
-	// Validate mappings
 	seenHTTPS := map[int]string{}
 	for _, p := range cfg.HTTPS {
 		if p.HTTP <= 0 || p.HTTP > 65535 || p.HTTPS <= 0 || p.HTTPS > 65535 || p.HTTP == p.HTTPS {

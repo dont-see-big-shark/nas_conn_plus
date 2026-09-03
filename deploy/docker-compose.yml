@@ -17,6 +17,10 @@ services:
       - SYS_PTRACE
     security_opt:
       - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
     volumes:
       - ./config.json:/etc/nasconnplus/config.json
       - ./tls:/etc/nasconnplus/tls
