@@ -11,7 +11,7 @@ ARG BUILD_DATE=""
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X 'github.com/jadenjoe/nasconnplus/internal/app.Version=${VERSION}' -X 'github.com/jadenjoe/nasconnplus/internal/app.BuildDate=${BUILD_DATE}'" -o nasconnplus ./cmd/nasconnplus
 
 # Stage 2: Ultra-lean Runtime image (< 15MB)
-FROM alpine:3.22
+FROM alpine:3.24
 
 # ca-certificates for TLS / Let's Encrypt, tzdata for timezones
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -H -s /sbin/nologin nasconnplus
