@@ -2,12 +2,14 @@ package ipc
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -50,7 +52,10 @@ func StartServer(socketPath string, provider func() StatusReport) (*Server, erro
 		return nil, fmt.Errorf("lstat socket %s: %w", socketPath, err)
 	}
 
+	// Narrow umask around Listen to avoid 0755 window, then enforce 0600 explicitly.
+	oldMask := syscall.Umask(0o077)
 	ln, err := net.Listen("unix", socketPath)
+	syscall.Umask(oldMask)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +86,8 @@ func (s *Server) serve() {
 			default:
 			}
 
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
 				time.Sleep(50 * time.Millisecond)
 				continue
 			}

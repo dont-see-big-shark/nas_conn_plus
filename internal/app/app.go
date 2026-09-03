@@ -4,8 +4,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
-	_ "net/http/pprof" // #nosec G108 - pprof endpoint is only bound when user explicitly provides --debug-addr
+	"net/http/pprof" // #nosec G108 - pprof endpoint is only bound when user explicitly provides --debug-addr
 	"os"
 	"os/signal"
 	"runtime"
@@ -16,12 +17,13 @@ import (
 	"github.com/dont-see-big-shark/nas_conn_plus/internal/config"
 	"github.com/dont-see-big-shark/nas_conn_plus/internal/ipc"
 	"github.com/dont-see-big-shark/nas_conn_plus/internal/logger"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/metrics"
 	"github.com/dont-see-big-shark/nas_conn_plus/internal/proxy"
 	"github.com/dont-see-big-shark/nas_conn_plus/internal/scanner"
 )
 
 var (
-	Version   = "1.0.1"
+	Version   = "1.1.0"
 	BuildDate = "2026-09-03"
 )
 
@@ -85,7 +87,8 @@ func Run() {
 		sockPath := *socketFlag
 		if sockPath == "" {
 			resolvedPath := config.ResolveConfigPath(*configPathFlag)
-			if cfg, err := config.LoadConfig(resolvedPath); err == nil && cfg.SocketPath != "" {
+			// Pure read: a status query must never create config files.
+			if cfg, err := config.LoadConfigFile(resolvedPath); err == nil && cfg.SocketPath != "" {
 				sockPath = cfg.SocketPath
 			} else {
 				sockPath = ipc.DefaultSocketPath()
@@ -111,7 +114,8 @@ func Run() {
 
 		var excludes []int
 		resolvedPath := config.ResolveConfigPath(*configPathFlag)
-		if cfg, err := config.LoadConfig(resolvedPath); err == nil {
+		// Pure read: diagnostics must reflect the file, never create one.
+		if cfg, err := config.LoadConfigFile(resolvedPath); err == nil {
 			seen := make(map[int]bool)
 			for _, p := range cfg.Relay.Exclude {
 				if !seen[p] {
@@ -132,10 +136,18 @@ func Run() {
 	}
 
 	resolvedPath := config.ResolveConfigPath(*configPathFlag)
-	cfg, err := config.LoadConfig(resolvedPath)
+	// Split I/O: Ensure is the only writer, LoadFile is a pure reader.
+	if _, err := config.EnsureDefaultConfig(resolvedPath); err != nil {
+		log.Warn("Configuration error: %v", err)
+		return
+	}
+	cfg, err := config.LoadConfigFile(resolvedPath)
 	if err != nil {
 		log.Warn("Configuration error: %v", err)
 		return
+	}
+	if cfg.OverrideDefaultExcludes {
+		log.Warn("override_default_excludes=true: built-in %d-port deny list DISABLED, only your explicit excludes apply", len(config.DefaultExcludePorts))
 	}
 
 	log.Banner(Version)
@@ -190,21 +202,37 @@ func Run() {
 	}
 
 	if *debugAddrFlag != "" {
-		debugSrv := &http.Server{
-			Addr:              *debugAddrFlag,
-			ReadHeaderTimeout: 5 * time.Second,
-		}
-		go func() {
-			log.Info("pprof debug server active on http://%s/debug/pprof/", *debugAddrFlag)
-			if err := debugSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Warn("pprof debug server error: %v", err)
+		if !isLoopbackDebugAddr(*debugAddrFlag) {
+			log.Warn("refusing to expose pprof/metrics on non-loopback %q; bind 127.0.0.1:6060 instead", *debugAddrFlag)
+		} else {
+			mux := http.NewServeMux()
+			mux.Handle("/metrics", metrics.Handler())
+			mux.HandleFunc("/debug/pprof/", pprof.Index)
+			mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+			mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+			mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+			mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+			debugSrv := &http.Server{
+				Addr:              *debugAddrFlag,
+				Handler:           mux,
+				ReadHeaderTimeout: 5 * time.Second,
+				ReadTimeout:       10 * time.Second,
+				WriteTimeout:      10 * time.Second,
+				IdleTimeout:       30 * time.Second,
+				MaxHeaderBytes:    1 << 20,
 			}
-		}()
-		defer func() {
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer shutdownCancel()
-			_ = debugSrv.Shutdown(shutdownCtx)
-		}()
+			go func() {
+				log.Info("pprof debug server active on http://%s/debug/pprof/", *debugAddrFlag)
+				if err := debugSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					log.Warn("pprof debug server error: %v", err)
+				}
+			}()
+			defer func() {
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer shutdownCancel()
+				_ = debugSrv.Shutdown(shutdownCtx)
+			}()
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -240,9 +268,27 @@ func Run() {
 	}
 }
 
+func isLoopbackDebugAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "" || host == "localhost" {
+		// Empty host (":6060") means all interfaces: refuse.
+		// "localhost" resolves to loopback on all supported platforms.
+		return host != ""
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
 func runReconcile(log *logger.Logger, cm *cert.Manager, srv *proxy.Service) {
+	start := time.Now()
 	res, err := scanner.Scan()
 	if err != nil {
+		metrics.ObserveReconcile(time.Since(start), err)
 		log.Warn("Port scan failed: %v (retaining current state)", err)
 		return
 	}
@@ -252,4 +298,5 @@ func runReconcile(log *logger.Logger, cm *cert.Manager, srv *proxy.Service) {
 	}
 
 	srv.Reconcile(res)
+	metrics.ObserveReconcile(time.Since(start), nil)
 }

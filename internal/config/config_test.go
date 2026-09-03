@@ -185,7 +185,7 @@ func TestLoadConfig_UnionAndOverrides(t *testing.T) {
 		t.Fatalf("failed to load config: %v", err)
 	}
 
-	if !cfg.Relay.ZeroCopy {
+	if !cfg.Relay.IsZeroCopy() {
 		t.Error("expected ZeroCopy=true")
 	}
 
@@ -278,6 +278,43 @@ func TestLoadConfig_AllowAndHSTS(t *testing.T) {
 	_ = os.WriteFile(invalidHTTPSMode, []byte(`{"https_mode": "invalid"}`), 0o600)
 	if _, err := LoadConfig(invalidHTTPSMode); err == nil {
 		t.Error("expected error for invalid https_mode")
+	}
+}
+
+func TestLoadConfig_ZeroCopyDefaults(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// 1. Omitted in config => defaults to true
+	p1 := filepath.Join(tempDir, "default.json")
+	_ = os.WriteFile(p1, []byte(`{"relay": {"auto": true}}`), 0o600)
+	c1, err := LoadConfig(p1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c1.Relay.IsZeroCopy() {
+		t.Errorf("expected omitted zero_copy to default to true")
+	}
+
+	// 2. Explicitly false => stays false
+	p2 := filepath.Join(tempDir, "false.json")
+	_ = os.WriteFile(p2, []byte(`{"relay": {"zero_copy": false}}`), 0o600)
+	c2, err := LoadConfig(p2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c2.Relay.IsZeroCopy() {
+		t.Errorf("expected explicit false to be false")
+	}
+
+	// 3. Explicitly true => stays true
+	p3 := filepath.Join(tempDir, "true.json")
+	_ = os.WriteFile(p3, []byte(`{"relay": {"zero_copy": true}}`), 0o600)
+	c3, err := LoadConfig(p3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c3.Relay.IsZeroCopy() {
+		t.Errorf("expected explicit true to be true")
 	}
 }
 

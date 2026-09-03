@@ -71,6 +71,22 @@ func sanitizeString(s string) string {
 	return b.String()
 }
 
+// truncateRunes caps attacker-influenced fields so a 1MB socket payload can't
+// turn the status table into a terminal flood. Width is in runes, not bytes.
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	i := 0
+	for idx := range s {
+		if i == max {
+			return s[:idx] + "…"
+		}
+		i++
+	}
+	return s
+}
+
 // RenderStatus formats the status report into an ergonomic Lipgloss dashboard table
 func RenderStatus(report *StatusReport) string {
 	if len(report.Listeners) == 0 {
@@ -114,7 +130,7 @@ func RenderStatus(report *StatusReport) string {
 		trafficStr := fmt.Sprintf("↓ %s / ↑ %s", formatBytes(l.BytesIn), formatBytes(l.BytesOut))
 		uptimeStr := formatDuration(now.Sub(l.StartedAt))
 
-		cleanName := sanitizeString(l.Name)
+		cleanName := truncateRunes(sanitizeString(l.Name), 48)
 
 		rows = append(rows, []string{
 			cleanName,
@@ -148,7 +164,7 @@ func RenderStatus(report *StatusReport) string {
 	daemonUptime := formatDuration(time.Duration(report.UptimeSeconds) * time.Second)
 	summaryLine := fmt.Sprintf(
 		"● Daemon: v%s | Uptime: %s | Active Conns: %d | Total Traffic: %s | Total Errors: %d",
-		report.Version,
+		truncateRunes(sanitizeString(report.Version), 32),
 		daemonUptime,
 		totalActive,
 		formatBytes(totalTraffic),
@@ -165,7 +181,7 @@ func formatBytes(b uint64) string {
 		return fmt.Sprintf("%d B", b)
 	}
 	div, exp := uint64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
+	for n := b / unit; n >= unit && exp < 5; n /= unit {
 		div *= unit
 		exp++
 	}
@@ -173,6 +189,9 @@ func formatBytes(b uint64) string {
 }
 
 func formatDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
 	d = d.Round(time.Second)
 	days := d / (24 * time.Hour)
 	d -= days * 24 * time.Hour

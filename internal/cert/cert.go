@@ -147,7 +147,18 @@ func (m *Manager) Refresh() error {
 	if fallback {
 		sc, newDir, err := m.loadOrCreateSelfSignedWith(selfDir, host)
 		if err == nil && sc != nil {
-			fp := "self:" + host
+			// P0-2 FIX: fingerprint the actual on-disk files, not just the
+			// host name. A static "self:"+host never changes, so an external
+			// rotation (certbot/acme.sh overwriting selfsigned.crt/.key)
+			// would be served stale until process restart.
+			effDir := selfDir
+			if newDir != "" {
+				effDir = newDir
+			}
+			fp := "self:" + m.certFingerprint(
+				filepath.Join(effDir, "selfsigned.crt"),
+				filepath.Join(effDir, "selfsigned.key"),
+			)
 			m.mu.Lock()
 			if fp != m.loadedAt || m.cur == nil {
 				m.cur = sc
@@ -169,7 +180,15 @@ func (m *Manager) Refresh() error {
 	}
 
 	if acmeEnabled && acmeMgr != nil {
-		return nil
+		// Don't mask a total failure: only swallow the error while we still
+		// have a usable certificate to serve. With no cert at all, surface
+		// lastErr so the operator sees it instead of silent handshake fails.
+		m.mu.RLock()
+		hasCurForACME := m.cur != nil
+		m.mu.RUnlock()
+		if hasCurForACME {
+			return nil
+		}
 	}
 
 	m.mu.RLock()

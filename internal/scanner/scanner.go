@@ -13,51 +13,15 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/tui"
 )
 
 var (
 	pidRe  = regexp.MustCompile(`pid=(\d+)`)
 	nameRe = regexp.MustCompile(`"([^"]+)"`)
-
-	// Lipgloss styles for terminal aesthetics
-	styleHeader = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#00D7D7")).
-			Padding(0, 1)
-
-	styleBorder = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#6272A4"))
-
-	styleRelayBadge = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#50FA7B")).
-			Render("● Will Relay to IPv6")
-
-	styleDualStackBadge = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("#8BE9FD")).
-				Render("● Native Dual-Stack")
-
-	styleExcludedBadge = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#6272A4")).
-				Render("○ Excluded (Skip)")
-
-	styleV6OnlyBadge = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#BD93F9")).
-				Render("○ IPv6-Only")
-
-	styleYes = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#50FA7B")).
-			Render("YES")
-
-	styleNo = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#6272A4")).
-		Render("No")
 )
 
 // Result holds the classified listening ports from the host network
@@ -127,34 +91,60 @@ func scanProcFS() (*Result, error) {
 	return scanProcFSWith("/proc", "/proc/self/fd")
 }
 
+func lookupProcInfo(inode string) (procInfo, bool) {
+	inodeMu.RLock()
+	defer inodeMu.RUnlock()
+	info, ok := cachedInodes[inode]
+	return info, ok
+}
+
+var lastRefreshUnix atomic.Int64
+
+// inodeRefreshCooldown debounces full /proc inode rescans. Tests may set it
+// to 0 for deterministic refresh; production keeps 10s to bound readlink cost.
+var inodeRefreshCooldown = 10 * time.Second
+
+func shouldRefreshInodes() bool {
+	now := time.Now()
+	last := time.Unix(0, lastRefreshUnix.Load())
+	if now.Sub(last) < inodeRefreshCooldown {
+		return false
+	}
+	return lastRefreshUnix.CompareAndSwap(last.UnixNano(), now.UnixNano())
+}
+
 func scanProcFSWith(procRoot, selfFdDir string) (*Result, error) {
 	mypid := os.Getpid()
 	selfInodes := getSelfSocketInodesWith(selfFdDir)
 
 	res := newResult()
 
-	// First pass using cached inodes
+	// First pass uses per-inode RLock lookups, no full-map copy (P1 perf).
 	missingInodes := false
-	inodeMap := getCachedInodes()
+	lookup := func(inode string) (procInfo, bool) { return lookupProcInfo(inode) }
 
 	tcpPath := filepath.Join(procRoot, "net/tcp")
 	tcp6Path := filepath.Join(procRoot, "net/tcp6")
 
-	if err := parseProcNetFile(tcpPath, false, res, mypid, selfInodes, inodeMap, &missingInodes); err != nil {
+	if err := parseProcNetFileLookup(tcpPath, false, res, mypid, selfInodes, lookup, &missingInodes); err != nil {
 		return nil, err
 	}
-	if err := parseProcNetFile(tcp6Path, true, res, mypid, selfInodes, inodeMap, &missingInodes); err != nil {
+	if err := parseProcNetFileLookup(tcp6Path, true, res, mypid, selfInodes, lookup, &missingInodes); err != nil {
 		return nil, err
 	}
 
-	// If new sockets appeared that weren't in our cache, refresh cache and re-populate with a clean Result
-	if missingInodes {
-		inodeMap = refreshInodeCacheWith(procRoot)
+	// If new sockets appeared that weren't in our cache, refresh cache (debounced) and re-populate.
+	if missingInodes && shouldRefreshInodes() {
+		inodeMap := refreshInodeCacheWith(procRoot)
 		res = newResult()
-		if err := parseProcNetFile(tcpPath, false, res, mypid, selfInodes, inodeMap, nil); err != nil {
+		lookup2 := func(inode string) (procInfo, bool) {
+			info, ok := inodeMap[inode]
+			return info, ok
+		}
+		if err := parseProcNetFileLookup(tcpPath, false, res, mypid, selfInodes, lookup2, nil); err != nil {
 			return nil, err
 		}
-		if err := parseProcNetFile(tcp6Path, true, res, mypid, selfInodes, inodeMap, nil); err != nil {
+		if err := parseProcNetFileLookup(tcp6Path, true, res, mypid, selfInodes, lookup2, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -167,6 +157,16 @@ type procInfo struct {
 	name string
 }
 
+//nolint:unused // test helper used by scanner_test (linter runs with tests:false).
+func parseProcNetFile(path string, isV6 bool, res *Result, mypid int, selfInodes map[string]bool, inodeMap map[string]procInfo, missingInodes *bool) error {
+	lookup := func(inode string) (procInfo, bool) {
+		info, ok := inodeMap[inode]
+		return info, ok
+	}
+	return parseProcNetFileInner(path, isV6, res, mypid, selfInodes, lookup, missingInodes)
+}
+
+//nolint:unused // read helper used by scanner_test (linter runs with tests:false).
 func getCachedInodes() map[string]procInfo {
 	inodeMu.RLock()
 	defer inodeMu.RUnlock()
@@ -234,7 +234,12 @@ func buildInodeToPIDMapWith(procRoot string) map[string]procInfo {
 // the opposite address family pass) and respects selfInodes so our own [::] sockets
 // never set V6Others. On missingInodes double-parse, caller provides a fresh
 // newResult() so stale V6Others cannot persist.
-func parseProcNetFile(path string, isV6 bool, res *Result, mypid int, selfInodes map[string]bool, inodeMap map[string]procInfo, missingInodes *bool) error {
+func parseProcNetFileLookup(path string, isV6 bool, res *Result, mypid int, selfInodes map[string]bool, lookup func(string) (procInfo, bool), missingInodes *bool) error {
+	// lookup-based fast path (no map copy)
+	return parseProcNetFileInner(path, isV6, res, mypid, selfInodes, lookup, missingInodes)
+}
+
+func parseProcNetFileInner(path string, isV6 bool, res *Result, mypid int, selfInodes map[string]bool, lookup func(string) (procInfo, bool), missingInodes *bool) error {
 	// #nosec G304 - path is restricted to /proc/net/tcp or /proc/net/tcp6
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
@@ -282,7 +287,7 @@ func parseProcNetFile(path string, isV6 bool, res *Result, mypid int, selfInodes
 		if isSelfSocket {
 			res.PIDs[port] = mypid
 			res.Names[port] = "nasconnplus"
-		} else if info, ok := inodeMap[inode]; ok {
+		} else if info, ok := lookup(inode); ok {
 			res.PIDs[port] = info.pid
 			res.Names[port] = info.name
 		} else if missingInodes != nil {
@@ -337,11 +342,30 @@ func parseSSOutput(out string, mypid int) *Result {
 
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 4 || fields[0] != "LISTEN" {
+		if len(fields) < 4 {
 			continue
 		}
 
-		local := fields[3]
+		// P0-3 FIX: `ss -tlnp` output shape differs by version. Some builds
+		// print a leading Netid column ("tcp LISTEN ..."), others start at
+		// State ("LISTEN ..."). Locate the STATE column instead of assuming
+		// fields[0], and take Local = STATE+3
+		// (State Recv-Q Send-Q Local Peer ...).
+		stateIdx := -1
+		for i, f := range fields {
+			if f == "LISTEN" {
+				stateIdx = i
+				break
+			}
+		}
+		if stateIdx < 0 || stateIdx+3 >= len(fields) {
+			continue
+		}
+
+		local := fields[stateIdx+3]
+		if !strings.Contains(local, ":") {
+			continue
+		}
 		idx := strings.LastIndex(local, ":")
 		if idx < 0 {
 			continue
@@ -440,7 +464,6 @@ func scanWithLsof() (*Result, error) {
 	return res, nil
 }
 
-// DiagnosticReport generates an attractive terminal report using charmbracelet/lipgloss/table
 func (r *Result) DiagnosticReport(excludedPorts []int) string {
 	excludeMap := make(map[int]bool)
 	for _, p := range excludedPorts {
@@ -465,6 +488,18 @@ func (r *Result) DiagnosticReport(excludedPorts []int) string {
 		return "No listening TCP wildcard ports detected."
 	}
 
+	// P1/P2: pre-probe in parallel with bounded concurrency instead of sequential blocking.
+	var httpPred map[int]bool
+	{
+		toProbe := make([]int, 0, len(ports))
+		for _, p := range ports {
+			if !excludeMap[p] && (r.V4Wild[p] || r.V6Any[p]) {
+				toProbe = append(toProbe, p)
+			}
+		}
+		httpPred = ProbePorts(toProbe)
+	}
+
 	var rows [][]string
 	for _, p := range ports {
 		v4 := r.V4Wild[p]
@@ -478,37 +513,19 @@ func (r *Result) DiagnosticReport(excludedPorts []int) string {
 			pName = "-"
 		}
 
-		var action string
-		switch {
-		case excludeMap[p]:
-			action = styleExcludedBadge
-		case v4 && !v6:
-			action = styleRelayBadge
-		case v4 && v6:
-			action = styleDualStackBadge
-		case !v4 && v6:
-			action = styleV6OnlyBadge
-		default:
-			action = "-"
-		}
+		action := tui.RelayAction(excludeMap[p], v4, v6)
 
-		v4Str := styleNo
-		if v4 {
-			v4Str = styleYes
-		}
-		v6Str := styleNo
-		if v6 {
-			v6Str = styleYes
-		}
+		v4Str := tui.BoolBadge(v4)
+		v6Str := tui.BoolBadge(v6)
 
 		httpsPred := "-"
 		if excludeMap[p] {
-			httpsPred = styleExcludedBadge
+			httpsPred = tui.ExcludedBadge()
 		} else if v4 || v6 {
-			if ProbeHTTP(p) {
-				httpsPred = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#50FA7B")).Render(fmt.Sprintf("✓ https :%d", p+1))
+			if httpPred[p] {
+				httpsPred = tui.HTTPSReady(p)
 			} else {
-				httpsPred = lipgloss.NewStyle().Foreground(lipgloss.Color("#6272A4")).Render("No HTTP")
+				httpsPred = tui.NoHTTP()
 			}
 		}
 
@@ -523,17 +540,9 @@ func (r *Result) DiagnosticReport(excludedPorts []int) string {
 		})
 	}
 
-	t := table.New().
-		Border(lipgloss.RoundedBorder()).
-		BorderStyle(styleBorder).
-		Headers("PORT", "IPv4 (0.0.0.0)", "IPv6 ([::])", "PID", "PROCESS", "RELAY ACTION", "HTTPS (+1)").
-		Rows(rows...).
-		StyleFunc(func(row, col int) lipgloss.Style {
-			if row == table.HeaderRow {
-				return styleHeader
-			}
-			return lipgloss.NewStyle().Padding(0, 1)
-		})
+	return renderDiagnosticTable(rows)
+}
 
-	return t.Render()
+func renderDiagnosticTable(rows [][]string) string {
+	return tui.RenderTable([]string{"PORT", "IPv4 (0.0.0.0)", "IPv6 ([::])", "PID", "PROCESS", "RELAY ACTION", "HTTPS (+1)"}, rows)
 }

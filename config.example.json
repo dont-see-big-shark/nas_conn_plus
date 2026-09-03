@@ -1,27 +1,27 @@
 {
-  "_comment": "nasconn+ 核心配置范例（开箱即用，内置高危端口自动防护）",
+  "_comment": "nasconn+ 核心配置范例（开箱即用，内置 19 个高危端口自动防护）",
   "_comment_cert": "自签名证书绑定的主机名/域名（默认自动生成并在内存中热重载 ECDSA 证书）",
   "cert_host": "nas.local",
-  "_comment_relay": "自动将仅监听 IPv4 (0.0.0.0) 的端口镜像至 IPv6 ([::])",
+  "_comment_relay": "自动将仅监听 IPv4 (0.0.0.0) 的端口镜像至 IPv6 ([::])。默认开启内核 splice(2) 零拷贝（流量字节统计恒为 0，连接数/错误数正常；要看流量需显式设为 false）",
   "relay": {
     "auto": true,
     "mode": "auto",
     "zero_copy": true,
     "exclude": [
-      22,
-      53
+      22, 23, 53, 111, 135, 137, 138, 139, 445, 2049,
+      2375, 2376, 3306, 3389, 5432, 6379, 9200, 11211, 27017
     ]
   },
   "_comment_https": "全自动嗅探本地 HTTP 服务并在 端口+1 建立带证书的 HTTPS 代理通道",
   "https_auto": true,
   "https_mode": "auto",
   "https_exclude": [
-    22,
-    53
+    22, 23, 53, 111, 135, 137, 138, 139, 445, 2049,
+    2375, 2376, 3306, 3389, 5432, 6379, 9200, 11211, 27017
   ],
   "_comment_advanced": "=== 以下为可选高级配置（平时无需配置） ===",
   "_optional_whitelist_mode": "严格白名单模式: \"relay\": {\"mode\": \"whitelist\", \"allow\": [8080]}, \"https_mode\": \"whitelist\", \"https_allow\": [8080]",
-  "_optional_zero_copy": "开启纯内核 splice(2) 零拷贝: \"relay\": {\"zero_copy\": true}",
+  "_optional_disable_zero_copy": "关闭内核零拷贝以恢复流量统计: \"relay\": {\"zero_copy\": false}",
   "_optional_hsts": "公信证书下启用 HSTS: \"hsts\": {\"enabled\": true, \"max_age\": 31536000}",
   "_optional_custom_https": "固定端口映射: \"https\": [{\"name\": \"网盘\", \"http\": 8080, \"https\": 8443}]",
   "_optional_acme": "Let's Encrypt 证书: \"acme\": {\"enabled\": true, \"domain\": \"nas.yourdomain.com\", \"email\": \"admin@yourdomain.com\"}"

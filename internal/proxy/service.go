@@ -17,11 +17,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/inetaf/tcpproxy"
 	"github.com/dont-see-big-shark/nas_conn_plus/internal/cert"
 	"github.com/dont-see-big-shark/nas_conn_plus/internal/config"
 	"github.com/dont-see-big-shark/nas_conn_plus/internal/logger"
 	"github.com/dont-see-big-shark/nas_conn_plus/internal/scanner"
+	"github.com/inetaf/tcpproxy"
 )
 
 // Zero-allocation buffer pool for reverse proxy to minimize GC churn
@@ -33,19 +33,27 @@ func newBytePool() *bytePool {
 	return &bytePool{
 		pool: sync.Pool{
 			New: func() interface{} {
-				b := make([]byte, 32*1024)
-				return &b
+				return make([]byte, 32*1024)
 			},
 		},
 	}
 }
 
 func (p *bytePool) Get() []byte {
-	return *p.pool.Get().(*[]byte)
+	if v := p.pool.Get(); v != nil {
+		if b, ok := v.([]byte); ok && len(b) == 32*1024 {
+			return b
+		}
+	}
+	return make([]byte, 32*1024)
 }
 
 func (p *bytePool) Put(b []byte) {
-	p.pool.Put(&b)
+	if len(b) != 32*1024 {
+		return
+	}
+	//nolint:staticcheck // storing []byte value avoids per-Put pointer alloc; 24B header copy is intentional.
+	p.pool.Put(b)
 }
 
 type Service struct {
@@ -56,7 +64,7 @@ type Service struct {
 	bufferPool *bytePool
 	transport  *http.Transport
 
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	listeners map[string]*listenerState // key: kind:port
 	missing   map[string]int
 
@@ -85,16 +93,21 @@ func NewService(cfg *config.Config, log *logger.Logger, certs *cert.Manager) *Se
 	s.transport = &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
+			Timeout:   5 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          256,
-		MaxIdleConnsPerHost:   64,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		DisableCompression:    true, // Pass-through compression to preserve NAS CPU
+		ForceAttemptHTTP2:      true,
+		MaxIdleConns:           128,
+		MaxIdleConnsPerHost:    32,
+		MaxConnsPerHost:        32,
+		IdleConnTimeout:        90 * time.Second,
+		TLSHandshakeTimeout:    5 * time.Second,
+		ResponseHeaderTimeout:  15 * time.Second,
+		ExpectContinueTimeout:  1 * time.Second,
+		// P1: 8K broke SSO-heavy backends (large Set-Cookie chains, e.g. DSM).
+		// 32K still bounds abuse at ~300x below Go's 10M default.
+		MaxResponseHeaderBytes: 32 << 10,
+		DisableCompression:     true, // Pass-through compression to preserve NAS CPU
 	}
 
 	s.tlsCfg = &tls.Config{
@@ -107,8 +120,8 @@ func NewService(cfg *config.Config, log *logger.Logger, certs *cert.Manager) *Se
 
 // GetMetricsSnapshot returns a real-time status and throughput report of all active listeners
 func (s *Service) GetMetricsSnapshot() []ListenerMetrics {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	res := make([]ListenerMetrics, 0, len(s.listeners))
 	for _, st := range s.listeners {
@@ -120,63 +133,15 @@ func (s *Service) GetMetricsSnapshot() []ListenerMetrics {
 }
 
 func (s *Service) isExcluded(port int) bool {
-	for _, p := range s.cfg.Relay.Exclude {
-		if p == port {
-			return true
-		}
-	}
-	for _, p := range s.cfg.HTTPSExclude {
-		if p == port {
-			return true
-		}
-	}
-	return false
+	return s.cfg.IsExcluded(port)
 }
 
 func (s *Service) isRelayAllowed(port int) bool {
-	if s.cfg.Relay.Mode == "whitelist" {
-		if len(s.cfg.Relay.Allow) == 0 {
-			return false
-		}
-		for _, a := range s.cfg.Relay.Allow {
-			if a == port {
-				return true
-			}
-		}
-		return false
-	}
-	if len(s.cfg.Relay.Allow) > 0 {
-		for _, a := range s.cfg.Relay.Allow {
-			if a == port {
-				return true
-			}
-		}
-		return false
-	}
-	return true
+	return s.cfg.IsRelayAllowed(port)
 }
 
 func (s *Service) isHTTPSAllowed(port int) bool {
-	if s.cfg.HTTPSMode == "whitelist" {
-		if len(s.cfg.HTTPSAllow) == 0 {
-			return false
-		}
-		for _, a := range s.cfg.HTTPSAllow {
-			if a == port {
-				return true
-			}
-		}
-		return false
-	}
-	if len(s.cfg.HTTPSAllow) > 0 {
-		for _, a := range s.cfg.HTTPSAllow {
-			if a == port {
-				return true
-			}
-		}
-		return false
-	}
-	return true
+	return s.cfg.IsHTTPSAllowed(port)
 }
 
 func (s *Service) isOurListenerPortLocked(port int) bool {
@@ -219,20 +184,9 @@ func (s *Service) Reconcile(res *scanner.Result) {
 	}
 
 	if len(portsToProbe) > 0 {
-		var wg sync.WaitGroup
-		sem := make(chan struct{}, 8)
-		for _, p := range portsToProbe {
-			wg.Add(1)
-			sem <- struct{}{}
-			go func(port int) {
-				defer func() {
-					<-sem
-					wg.Done()
-				}()
-				_ = scanner.ProbeHTTP(port)
-			}(p)
-		}
-		wg.Wait()
+		// Single bounded-parallel prober (cap 16 inside ProbePorts); results
+		// land in the shared cache consumed below, so the return is ignored.
+		_ = scanner.ProbePorts(portsToProbe)
 	}
 
 	s.mu.Lock()
@@ -350,7 +304,7 @@ func (s *Service) Reconcile(res *scanner.Result) {
 			continue
 		}
 
-		if st := s.tryListen(w); st != nil {
+		if st, err := s.tryListen(w); err == nil {
 			s.listeners[k] = st
 			s.missing[k] = 0
 			s.warnMu.Lock()
@@ -381,7 +335,7 @@ func (s *Service) Reconcile(res *scanner.Result) {
 			s.warnMu.Unlock()
 
 			if shouldWarn {
-				s.log.Warn("%s: cannot listen %s (port occupied, retrying)", w.name, s.addrOf(w.kind, w.port))
+				s.log.Warn("%s: cannot listen %s (%v, retrying)", w.name, s.addrOf(w.kind, w.port), err)
 			}
 		}
 	}
@@ -419,7 +373,7 @@ func (s *Service) Reconcile(res *scanner.Result) {
 		}
 
 		if st.conflict {
-			if st2 := s.tryListen(w); st2 != nil {
+			if st2, err := s.tryListen(w); err == nil {
 				s.listeners[k] = st2
 				s.missing[k] = 0
 				s.warnMu.Lock()
@@ -543,7 +497,14 @@ func (s *Service) acceptRelayLoop(st *listenerState) {
 			default:
 			}
 
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			// Terminal: limitListener.Close() or ln.Close() during Shutdown.
+			// Return immediately instead of entering backoff spin.
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
 				time.Sleep(50 * time.Millisecond)
 				continue
 			}
@@ -564,12 +525,20 @@ func (s *Service) acceptRelayLoop(st *listenerState) {
 		st.activeConn.Add(1)
 		st.totalConn.Add(1)
 
-		if s.cfg.Relay.ZeroCopy {
-			zcConn := &activeCountingConn{
-				Conn:   conn,
-				active: &st.activeConn,
+		if s.cfg.Relay.IsZeroCopy() {
+			rawConn := conn
+			var release func()
+			if llc, ok := conn.(*limitListenerConn); ok {
+				rawConn = llc.Unwrap()
+				release = llc.Release
 			}
-			go dialProxy.HandleConn(zcConn)
+			go func(c net.Conn, rel func()) {
+				defer st.activeConn.Add(-1)
+				if rel != nil {
+					defer rel()
+				}
+				dialProxy.HandleConn(c)
+			}(rawConn, release)
 		} else {
 			cConn := &countingConn{
 				Conn:   conn,
@@ -582,39 +551,13 @@ func (s *Service) acceptRelayLoop(st *listenerState) {
 	}
 }
 
-// activeCountingConn manages connection lifecycle and enables direct Linux kernel splice(2) zero-copy
-type activeCountingConn struct {
-	net.Conn
-	active *atomic.Int64
-	once   sync.Once
-}
-
-func (c *activeCountingConn) UnderlyingConn() net.Conn {
-	return c.Conn
-}
-
-func (c *activeCountingConn) Close() error {
-	err := c.Conn.Close()
-	c.once.Do(func() {
-		if c.active != nil {
-			c.active.Add(-1)
-		}
-	})
-	return err
-}
-
-// countingConn tracks bytes in/out and implements net.Conn, UnderlyingConn, and TCP extension interfaces
-// to enable Linux kernel splice(2) zero-copy and keepalive in tcpproxy.
+// countingConn tracks bytes in/out and implements net.Conn and TCP extension interfaces.
 type countingConn struct {
 	net.Conn
 	active *atomic.Int64
 	in     *atomic.Uint64
 	out    *atomic.Uint64
 	closed atomic.Bool
-}
-
-func (c *countingConn) UnderlyingConn() net.Conn {
-	return c.Conn
 }
 
 func (c *countingConn) Read(b []byte) (n int, err error) {

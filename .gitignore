@@ -33,3 +33,9 @@ go.work
 *.pem
 /dist/
 issues/
+
+# nasconn+ generated artifacts explicit
+coverage.out
+coverage.html
+internal/app/tls/
+tls/

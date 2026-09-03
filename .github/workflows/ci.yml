@@ -42,7 +42,6 @@ jobs:
           git diff --exit-code -- go.mod go.sum
 
       - name: Run govulncheck
-        continue-on-error: true
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
@@ -62,6 +61,22 @@ jobs:
           files: ./coverage.out
           fail_ci_if_error: false
           verbose: true
+
+      # Advisory only: gosec/golangci-lint findings are noisy on first
+      # adoption. Keep non-blocking until the baseline is clean, then drop
+      # continue-on-error to enforce. govulncheck above is the blocking gate.
+      - name: Run gosec
+        continue-on-error: true
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec -quiet ./...
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        continue-on-error: true
+        with:
+          version: latest
+          args: run ./...
 
       - name: Verify Cross-Platform Compilation
         env:

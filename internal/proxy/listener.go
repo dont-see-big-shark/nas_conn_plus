@@ -66,10 +66,16 @@ type want struct {
 	tls     bool
 }
 
-// limitListener wraps a net.Listener to limit concurrent connections
+// limitListener wraps a net.Listener to limit concurrent connections.
+// P0-1 FIX: acquire is interruptible via done so Shutdown/Close never hangs
+// when the semaphore is full (slowloris holding maxConns). Close unblocks all
+// waiters with net.ErrClosed, which both acceptRelayLoop and http.Server treat
+// as terminal.
 type limitListener struct {
 	net.Listener
-	sem chan struct{}
+	sem       chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 func newLimitListener(ln net.Listener, maxConns int) net.Listener {
@@ -79,18 +85,41 @@ func newLimitListener(ln net.Listener, maxConns int) net.Listener {
 	return &limitListener{
 		Listener: ln,
 		sem:      make(chan struct{}, maxConns),
+		done:     make(chan struct{}),
 	}
 }
 
-func (l *limitListener) acquire() { l.sem <- struct{}{} }
+// acquire reports false when the listener is closed while waiting for a slot.
+func (l *limitListener) acquire() bool {
+	select {
+	case l.sem <- struct{}{}:
+		return true
+	case <-l.done:
+		return false
+	}
+}
 func (l *limitListener) release() { <-l.sem }
 
+func (l *limitListener) Close() error {
+	l.closeOnce.Do(func() { close(l.done) })
+	return l.Listener.Close()
+}
+
 func (l *limitListener) Accept() (net.Conn, error) {
-	l.acquire()
+	if !l.acquire() {
+		return nil, net.ErrClosed
+	}
 	conn, err := l.Listener.Accept()
 	if err != nil {
 		l.release()
-		return nil, err
+		// If we were closed while in underlying Accept, normalize to ErrClosed
+		// so callers can errors.Is-check instead of string-matching.
+		select {
+		case <-l.done:
+			return nil, net.ErrClosed
+		default:
+			return nil, err
+		}
 	}
 	return &limitListenerConn{Conn: conn, release: l.release}, nil
 }
@@ -105,6 +134,17 @@ func (c *limitListenerConn) Close() error {
 	err := c.Conn.Close()
 	c.once.Do(c.release)
 	return err
+}
+
+// Unwrap returns the underlying net.Conn (typically *net.TCPConn),
+// enabling pure in-kernel splice(2) zero-copy in tcpproxy.
+func (c *limitListenerConn) Unwrap() net.Conn {
+	return c.Conn
+}
+
+// Release releases the concurrency slot on the parent limitListener.
+func (c *limitListenerConn) Release() {
+	c.once.Do(c.release)
 }
 
 // listenV6Only creates a TCP listener bound specifically to IPv6 wildcard [::] with IPV6_V6ONLY=1.
@@ -126,7 +166,7 @@ func listenV6Only(port int) (net.Listener, error) {
 	return lc.Listen(context.Background(), "tcp6", fmt.Sprintf("[::]:%d", port))
 }
 
-func (s *Service) tryListen(w want) *listenerState {
+func (s *Service) tryListen(w want) (*listenerState, error) {
 	st := &listenerState{
 		kind:      w.kind,
 		name:      w.name,
@@ -145,8 +185,11 @@ func (s *Service) tryListen(w want) *listenerState {
 		ln, err = listenV6Only(w.port)
 	}
 
+	// P1: surface the real errno. Callers log it so EADDRINUSE (neighbour
+	// restart, retry helps) is distinguishable from EACCES (low port without
+	// CAP_NET_BIND_SERVICE, retry won't help) and EAFNOSUPPORT.
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("listen %s %s: %w", w.kind, s.addrOf(w.kind, w.port), err)
 	}
 
 	maxConns := s.cfg.MaxConnsPerListener
@@ -154,5 +197,5 @@ func (s *Service) tryListen(w want) *listenerState {
 		maxConns = 2048
 	}
 	st.ln = newLimitListener(ln, maxConns)
-	return st
+	return st, nil
 }

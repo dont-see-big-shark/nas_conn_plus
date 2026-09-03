@@ -378,15 +378,6 @@ func TestProxy_CountingConn_Interfaces(t *testing.T) {
 		Conn: clientConn,
 	}
 
-	// Test UnderlyingConn (critical for tcpproxy splice zero-copy unwrapping)
-	type underlying interface {
-		UnderlyingConn() net.Conn
-	}
-	u, ok := interface{}(cConn).(underlying)
-	if !ok || u.UnderlyingConn() != clientConn {
-		t.Errorf("countingConn must implement UnderlyingConn() net.Conn")
-	}
-
 	// Test TCP extension interfaces
 	if err := cConn.SetKeepAlive(true); err != nil {
 		t.Logf("SetKeepAlive: %v", err)
@@ -537,11 +528,6 @@ func TestProxy_CountingConn_FullLifecycle(t *testing.T) {
 		out:    &bytesOut,
 	}
 
-	// UnderlyingConn
-	if cc.UnderlyingConn() != pipeR {
-		t.Error("UnderlyingConn did not match")
-	}
-
 	// Write from peer and Read from cc
 	go func() {
 		_, _ = pipeW.Write([]byte("ping"))
@@ -588,31 +574,30 @@ func TestProxy_CountingConn_FullLifecycle(t *testing.T) {
 	}
 }
 
-func TestProxy_ActiveCountingConn(t *testing.T) {
+func TestProxy_LimitListenerConn_UnwrapAndRelease(t *testing.T) {
 	pipeR, pipeW := net.Pipe()
 	defer pipeW.Close()
 
-	var active atomic.Int64
-	active.Store(1)
-
-	zc := &activeCountingConn{
-		Conn:   pipeR,
-		active: &active,
+	released := false
+	llc := &limitListenerConn{
+		Conn: pipeR,
+		release: func() {
+			released = true
+		},
 	}
 
-	if zc.UnderlyingConn() != pipeR {
-		t.Errorf("UnderlyingConn did not match")
+	if llc.Unwrap() != pipeR {
+		t.Errorf("Unwrap did not return underlying conn")
 	}
 
-	_ = zc.Close()
-	if active.Load() != 0 {
-		t.Errorf("expected active=0 after close, got %d", active.Load())
+	llc.Release()
+	if !released {
+		t.Errorf("expected slot released")
 	}
-	// Duplicate close should be idempotent
-	_ = zc.Close()
-	if active.Load() != 0 {
-		t.Errorf("expected active=0 after duplicate close, got %d", active.Load())
-	}
+	// Duplicate Release should be idempotent via sync.Once
+	llc.Release()
+
+	_ = llc.Close()
 }
 
 func TestProxy_LimitListener(t *testing.T) {
@@ -872,6 +857,106 @@ func TestProxy_Relay_PersistsAcrossReconciles(t *testing.T) {
 	}
 	if missing >= cfg.GracePolls {
 		t.Fatalf("relay listener %s accumulating teardown polls (missing=%d)", relayKey, missing)
+	}
+}
+
+func TestProxy_Relay_ZeroCopyEndToEnd(t *testing.T) {
+	// Start a backend TCP server that echos what it receives.
+	backendLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("backend listen: %v", err)
+	}
+	defer backendLn.Close()
+	backendPort := backendLn.Addr().(*net.TCPAddr).Port
+
+	go func() {
+		for {
+			conn, err := backendLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 1024)
+				n, _ := c.Read(buf)
+				if n > 0 {
+					_, _ = c.Write(buf[:n])
+				}
+			}(conn)
+		}
+	}()
+
+	tempDir := t.TempDir()
+	trueVal := true
+	cfg := &config.Config{
+		PollSeconds:  1,
+		GracePolls:   1,
+		FallbackSelf: &trueVal,
+		SelfDir:      tempDir,
+		CertHost:     "localhost",
+		Relay: config.RelayCfg{
+			Auto:     true,
+			ZeroCopy: &trueVal,
+		},
+	}
+
+	cm := cert.NewManager("", "localhost", tempDir, true, false, "", "", "")
+	_ = cm.Refresh()
+	lg := logger.New()
+	srv := NewService(cfg, lg, cm)
+	defer srv.Shutdown()
+
+	srv.Reconcile(&scanner.Result{
+		V4Wild:   map[int]bool{backendPort: true},
+		V6Any:    map[int]bool{},
+		V6Others: map[int]bool{},
+		PIDs:     map[int]int{},
+		Names:    map[int]string{},
+	})
+
+	relayKey := fmt.Sprintf("relay:%d", backendPort)
+	srv.mu.RLock()
+	st, ok := srv.listeners[relayKey]
+	srv.mu.RUnlock()
+	if !ok || st == nil {
+		t.Fatalf("relay listener %s not created", relayKey)
+	}
+
+	// Dial relay listener via IPv6 loopback
+	clientConn, err := net.Dial("tcp", fmt.Sprintf("[::1]:%d", backendPort))
+	if err != nil {
+		t.Skipf("cannot dial IPv6 relay on this environment: %v", err)
+	}
+
+	testMsg := "zerocopy-ping"
+	if _, err := clientConn.Write([]byte(testMsg)); err != nil {
+		t.Fatalf("write to relay failed: %v", err)
+	}
+
+	respBuf := make([]byte, len(testMsg))
+	_ = clientConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.ReadFull(clientConn, respBuf); err != nil {
+		t.Fatalf("read from relay failed: %v", err)
+	}
+	if string(respBuf) != testMsg {
+		t.Fatalf("expected echo %q, got %q", testMsg, string(respBuf))
+	}
+
+	_ = clientConn.Close()
+
+	// Wait for goroutines to settle
+	time.Sleep(100 * time.Millisecond)
+
+	metrics := st.Metrics()
+	if metrics.TotalConn != 1 {
+		t.Errorf("expected TotalConn=1, got %d", metrics.TotalConn)
+	}
+	if metrics.ActiveConn != 0 {
+		t.Errorf("expected ActiveConn=0 after close, got %d", metrics.ActiveConn)
+	}
+	// ZeroCopy bypasses userspace byte counting:
+	if metrics.BytesIn != 0 || metrics.BytesOut != 0 {
+		t.Errorf("expected 0 bytes counted in ZeroCopy mode, got In=%d Out=%d", metrics.BytesIn, metrics.BytesOut)
 	}
 }
 

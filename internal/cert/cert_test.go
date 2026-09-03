@@ -83,6 +83,56 @@ func TestCertManager_SelfSigned(t *testing.T) {
 	}
 }
 
+func TestCertManager_SelfSignedRotation(t *testing.T) {
+	tempDir := t.TempDir()
+
+	cm := NewManager("", "nas.home.local", tempDir, true, false, "", "", "")
+	if err := cm.Refresh(); err != nil {
+		t.Fatalf("initial refresh failed: %v", err)
+	}
+	cert1 := cm.Current()
+	if cert1 == nil || len(cert1.Certificate) == 0 {
+		t.Fatal("expected initial self-signed certificate")
+	}
+
+	// Simulate external rotation overwriting the same filenames.
+	time.Sleep(10 * time.Millisecond)
+	generateTestCert(t, "nas.home.local", 9999,
+		filepath.Join(tempDir, "selfsigned.crt"),
+		filepath.Join(tempDir, "selfsigned.key"))
+
+	if err := cm.Refresh(); err != nil {
+		t.Fatalf("second refresh failed: %v", err)
+	}
+	cert2 := cm.Current()
+	if cert2 == nil || len(cert2.Certificate) == 0 {
+		t.Fatal("expected rotated certificate")
+	}
+	x509Cert2, _ := x509.ParseCertificate(cert2.Certificate[0])
+	if x509Cert2.SerialNumber.Int64() != 9999 {
+		t.Errorf("self-signed rotation not picked up: still serving old cert (P0-2 regression)")
+	}
+}
+
+func TestCertManager_ACMEFailureSurfacesWithoutCert(t *testing.T) {
+	tempDir := t.TempDir()
+	// No cert source at all + ACME enabled: Refresh must surface the error
+	// instead of returning nil while serving nothing.
+	cm := NewManager("/nonexistent/certs.json", "nas.home.local", tempDir, false, true, "example.com", "", filepath.Join(tempDir, "acme"))
+	if err := cm.Refresh(); err == nil {
+		t.Error("expected Refresh error when no certificate is available, got nil (ACME error masking)")
+	}
+
+	// With a fallback self-signed cert available, ACME mode stays silent.
+	cm2 := NewManager("/nonexistent/certs.json", "nas.home.local", t.TempDir(), true, true, "example.com", "", filepath.Join(tempDir, "acme2"))
+	if err := cm2.Refresh(); err != nil {
+		t.Errorf("expected nil error when fallback cert exists, got: %v", err)
+	}
+	if cm2.Current() == nil {
+		t.Error("expected fallback certificate to be loaded")
+	}
+}
+
 func TestCertManager_InPlaceReload(t *testing.T) {
 	tempDir := t.TempDir()
 

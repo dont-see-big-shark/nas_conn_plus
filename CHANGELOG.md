@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-09-03
+
+This release closes the correctness and hardening backlog from the v1.0.x
+security and QA reviews: two CRITICAL stability bugs, one remotely
+exploitable header-injection flaw, IPC/config hardening, and a wave of
+robustness fixes. No config file changes are required to upgrade.
+
+### Highlights
+- **No more listener cascade / port theft**: self-owned listener ports are
+  excluded from auto-discovery, target occupancy is decided by real `bind`
+  (`EADDRINUSE`) instead of wildcard tables, and conflicts retry on the next
+  poll instead of stealing a neighbour's port.
+- **Header injection fixed**: the L7 proxy moved from `Director` to `Rewrite`,
+  so forged `X-Forwarded-For` / `Forwarded` and `Connection:`-driven header
+  stripping no longer reach backends.
+- **Certificates actually reload**: external and self-signed certificates are
+  fingerprinted by content + mtime (was: file path / static string), so
+  certbot-style in-place renewals take effect without a restart.
+- **Safer defaults, honest docs**: the generated config now embeds the full
+  19-port deny list, `override_default_excludes=true` logs a WARN, and the
+  debug endpoint refuses non-loopback binds.
+
+### Security fixes
+- L7 `X-Forwarded-*` / `Forwarded` spoofing via `Director` + `Connection:`
+  header stripping (remote, unauthenticated) — fixed with `Rewrite`.
+- Unix socket created with umask-narrowed `0600`, `Lstat`-before-remove,
+  client read deadline (5s) + 1MB cap, ANSI/control-char sanitizing and
+  field truncation in status rendering.
+- `--debug-addr` on a non-loopback address is now refused; debug uses an
+  isolated `ServeMux` with full timeouts; loopback detection covers all of
+  `127/8` and v4-mapped IPv6.
+- `..` rejected in `socket_path`, `cert_config_path`, `selfsigned_dir` and
+  `acme.cache_dir`; CWD trust check hardened (`/private/tmp`, `/dev/shm`,
+  no false positive on `/tmpfoo`).
+- CI: `govulncheck` is now a blocking gate (`gosec` / `golangci-lint` stay
+  advisory until their baseline is clean).
+
+### Behavior changes
+- `status` and `-t` are pure reads and never create config files; only the
+  daemon bootstraps a default config on first start.
+- Self-signed fallback validity is 825 days (was 10 years).
+- `MaxResponseHeaderBytes` 8K -> 32K (SSO-heavy backends such as DSM were
+  getting 502s); `GracePolls` is clamped to 120.
+- `tryListen` failures now log the real errno (`EADDRINUSE` vs `EACCES`).
+- `ss` fallback parser handles both Netid-prefixed and bare `ss -tlnp`
+  output; probe singleflight waiters have a 5s fallback deadline.
+
+### Performance
+- True kernel `splice(2)` zero-copy: relay connections unwrap to raw `*net.TCPConn` on both sides, enabling Go's Linux splice pipe optimization, 30s TCP keepalives, and half-close signaling without userspace memory copy; `relay.zero_copy` defaults to `true`.
+- O(1) exclude/allow sets, per-inode `RLock` lookups, 10s inode-refresh
+  debounce (test-injectable), singleflight + TTL probe cache (negative 15s /
+  positive 5m), bounded `ProbePorts` parallelism (16), `Service.mu` ->
+  `RWMutex`, zero-alloc buffer pool fix.
+
+### Observability
+- New dependency-free `internal/metrics` (`nasconn_reconciles_total`,
+  `nasconn_reconcile_errors_total`, `nasconn_reconcile_last_duration_ms`,
+  `nasconn_probes_total`, `nasconn_probes_http_total`) served at `/metrics`
+  on the debug address.
+
+### Tests
+- Total statement coverage **83.4% -> 82.5%** (`go test -race
+  -covermode=atomic`; delta is new defensive branches, per-package rows vary
+  by OS — Linux CI is canonical).
+- New: `tui` 100%, `metrics` 100%, config set/allow + Ensure/LoadFile tests, `formatBytes` MaxUint64 test, `bytePool` size-guard test, `FuzzParseSSOutput`, `BenchmarkBytePoolGetPut` (~43ns/op), `BenchmarkFormatBytes` (`~119ns/op`).
+- This round: `TestLimitListenerCloseUnblocksFullAccept`, `TestLimitListenerAcceptReleaseCycle`, `TestTryListenConflictError`, `TestTryListenPrivilegedPortError`, `TestIsLoopbackDebugAddr`, `TestApp_Run_DebugNonLoopbackRefused`, `TestApp_Run_OverrideWarn`, `TestCertManager_SelfSignedRotation`, `TestCertManager_ACMEFailureSurfacesWithoutCert`, `TestParseSSOutputFormats`, `TestShouldRefreshInodesCooldown`, `TestDefaultConfigTextMatchesDenyList`, `TestUntrustedCWD`, `TestGracePollsClamped`, `TestTraversalPathsRejected`, `TestTruncateRunes`, `TestRenderStatusSanitizesUntrustedFields`.
+
 ## [1.0.1] - 2026-09-03
 
 ### Changed
