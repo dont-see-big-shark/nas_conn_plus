@@ -6,7 +6,7 @@
 *Overcome IPv4 CGNAT · Automated IPv6 Relay · Port+1 Seamless HTTPS Upgrade*
 
 [![CI](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml/badge.svg)](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/Coverage-81.5%25-brightgreen.svg?logo=codecov)](https://github.com/jadenjoe/nasconnplus)
+[![Coverage](https://img.shields.io/badge/Coverage-82.1%25-brightgreen.svg?logo=codecov)](https://github.com/jadenjoe/nasconnplus)
 [![Go Report Card](https://goreportcard.com/badge/github.com/jadenjoe/nasconnplus)](https://goreportcard.com/report/github.com/jadenjoe/nasconnplus)
 [![Latest Release](https://img.shields.io/github/v/release/jadenjoe/nasconnplus?logo=github&color=3388ff)](https://github.com/jadenjoe/nasconnplus/releases)
 [![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.22-00ADD8?logo=go)](https://golang.org)
@@ -308,19 +308,19 @@ Query the background daemon from any terminal shell to view listener health, act
 
 ## 🧪 Testing & Quality Assurance
 
-All core business modules are verified with automated unit tests, end-to-end integration tests, and Go's race detector (`-race`), continuously audited by GitHub Actions CI. Total codebase statement coverage stands at **81.5%**:
+All core business modules are verified with automated unit tests, end-to-end integration tests, and Go's race detector (`-race`), continuously audited by GitHub Actions CI. Total codebase statement coverage stands at **82.1%**:
 
 | Package | Responsibility | Statement Coverage | Quality Focus |
 | :--- | :--- | :---: | :--- |
 | `internal/logger` | Structured terminal formatting & multi-channel logger | **100.0%** | Zero race conditions, graceful NO_COLOR fallback |
 | `cmd/nasconnplus` | CLI entry point & binary launcher | **100.0%** | Argument forwarding & lifecycle execution |
-| `internal/scanner` | Linux procfs socket sniffing, HTTP probing & diagnostics | **91.0%** | Zero-dependency procfs parsing, self-inode decoupling |
+| `internal/scanner` | Linux procfs socket sniffing, HTTP probing & diagnostics | **93.8%** | Zero-dependency procfs parsing, self-inode decoupling |
 | `internal/config` | Config discovery, recursive parsing & boundary validation | **88.3%** | Whitelist modes, high-risk port union protection |
 | `internal/app` | Daemon lifecycle, signal management & reconciliation loop | **85.5%** | Graceful termination, IPC integration, opt-in pprof |
 | `internal/ipc` | Unix Domain Socket client/server IPC communication | **84.2%** | 0600 socket permissions, retry logic, status rendering |
 | `internal/cert` | TLS certificate manager, ECDSA self-signing & ACME | **76.8%** | Live certificate reload, fingerprint caching, SNI fallback |
 | `internal/proxy` | L4 zero-copy TCP relay & L7 HTTPS reverse proxy engine | **69.3%** | Splice zero-copy, connection limiter, HSTS, smooth handover |
-| **Total Coverage** | **Entire Codebase Statements** | **`81.5%`** | **Automated CI Validation Across Go Versions** |
+| **Total Coverage** | **Entire Codebase Statements** | **`82.1%`** | **Automated CI Validation Across Go Versions** |
 
 ### Local Test Execution
 

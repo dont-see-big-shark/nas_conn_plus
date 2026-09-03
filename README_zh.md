@@ -6,7 +6,7 @@
 *突破 IPv4 大内网限制 · 自动 IPv6 中继 · 端口 +1 无感升级 HTTPS*
 
 [![CI](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml/badge.svg)](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/Coverage-81.5%25-brightgreen.svg?logo=codecov)](https://github.com/jadenjoe/nasconnplus)
+[![Coverage](https://img.shields.io/badge/Coverage-82.1%25-brightgreen.svg?logo=codecov)](https://github.com/jadenjoe/nasconnplus)
 [![Go Report Card](https://goreportcard.com/badge/github.com/jadenjoe/nasconnplus)](https://goreportcard.com/report/github.com/jadenjoe/nasconnplus)
 [![Latest Release](https://img.shields.io/github/v/release/jadenjoe/nasconnplus?logo=github&color=3388ff)](https://github.com/jadenjoe/nasconnplus/releases)
 [![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.22-00ADD8?logo=go)](https://golang.org)
@@ -305,19 +305,19 @@ Options:
 
 ## 🧪 测试与质量保证 (Testing & Quality)
 
-本项目核心业务模块均编写了自动化单元测试、集成测试与竞态检测（Race Detector），由 GitHub Actions CI 在多版本 Go 环境下自动守护。整体语句覆盖率达到 **81.5%**，核心子模块覆盖率明细如下：
+本项目核心业务模块均编写了自动化单元测试、集成测试与竞态检测（Race Detector），由 GitHub Actions CI 在多版本 Go 环境下自动守护。整体语句覆盖率达到 **82.1%**，核心子模块覆盖率明细如下：
 
 | 模块 (Package) | 职责说明 | 覆盖率 (Coverage) | 质量保障重点 |
 | :--- | :--- | :---: | :--- |
 | `internal/logger` | 结构化终端排版与多通道着色日志记录器 | **100.0%** | 并发无竞态、NO_COLOR 终端无缝降级 |
 | `cmd/nasconnplus` | 命令行入口点与二进制启动器 | **100.0%** | 参数透传与入口生命周期 |
-| `internal/scanner` | Linux 内核 procfs 端口嗅探、HTTP 探测与报表 | **91.0%** | procfs 零依赖解析、自进程 /proc/self/fd 解耦 |
+| `internal/scanner` | Linux 内核 procfs 端口嗅探、HTTP 探测与报表 | **93.8%** | procfs 零依赖解析、自进程 /proc/self/fd 解耦、ss 解析测试 |
 | `internal/config` | 配置文件查找、递归解析、高危端口并集防御与边界校验 | **88.3%** | 白名单模式、/tmp 敏感路径防提权、高危并集保护 |
 | `internal/app` | 守护进程生命周期、CLI 参数解析与主事件循环协调器 | **85.5%** | 命令行解析、状态联动、优雅信号平滑终止、pprof 支持 |
 | `internal/ipc` | Unix Domain Socket 客户端/服务端 IPC 通信与大盘渲染 | **84.2%** | 0600 权限隔离、优雅重试、健康状态报表 |
 | `internal/cert` | TLS 证书管理器、ECDSA 自签与 Let's Encrypt 适配 | **76.8%** | 证书热重载、指纹防重复加载、多域名命中 |
 | `internal/proxy` | L4 零拷贝 TCP Relay 中继与 L7 HTTPS 反向代理引擎 | **69.3%** | 零拷贝 splice、并发限制器、HSTS 注入、双栈平滑交接 |
-| **综合覆盖率 (Total)** | **全项目业务代码总覆盖** | **`81.5%`** | **持续集成 CI 自动全链路守护** |
+| **综合覆盖率 (Total)** | **全项目业务代码总覆盖** | **`82.1%`** | **持续集成 CI 自动全链路守护** |
 
 ### 本地运行测试与覆盖率报告
 

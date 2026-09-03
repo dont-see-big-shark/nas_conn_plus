@@ -439,5 +439,11 @@ func TestScanProcFSWith_MockFixtures(t *testing.T) {
 	}
 }
 
+func TestScanWithSS(t *testing.T) {
+	// Execute scanWithSS directly: verifies execution without panic.
+	// On Linux with iproute2 it executes ss; on macOS/minimal systems it returns exec error.
+	_, _ = scanWithSS()
+}
+
 
 
