@@ -5,12 +5,12 @@
 **Lightweight connection enhancement daemon engineered for NAS and self-hosted home labs**  
 *Overcome IPv4 CGNAT · Automated IPv6 Relay · Port+1 Seamless HTTPS Upgrade*
 
-[![CI](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml/badge.svg)](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/Coverage-82.1%25-brightgreen.svg?logo=codecov)](https://github.com/jadenjoe/nasconnplus)
-[![Go Report Card](https://goreportcard.com/badge/github.com/jadenjoe/nasconnplus)](https://goreportcard.com/report/github.com/jadenjoe/nasconnplus)
-[![Latest Release](https://img.shields.io/github/v/release/jadenjoe/nasconnplus?logo=github&color=3388ff)](https://github.com/jadenjoe/nasconnplus/releases)
+[![CI](https://github.com/dont-see-big-shark/nas_conn_plus/actions/workflows/ci.yml/badge.svg)](https://github.com/dont-see-big-shark/nas_conn_plus/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/Coverage-82.1%25-brightgreen.svg?logo=codecov)](https://github.com/dont-see-big-shark/nas_conn_plus)
+[![Go Report Card](https://goreportcard.com/badge/github.com/dont-see-big-shark/nas_conn_plus)](https://goreportcard.com/report/github.com/dont-see-big-shark/nas_conn_plus)
+[![Version](https://img.shields.io/badge/Version-v1.0.0-3388ff?logo=github)](https://github.com/dont-see-big-shark/nas_conn_plus/releases)
 [![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.22-00ADD8?logo=go)](https://golang.org)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20NAS%20%7C%20Docker-lightgrey)](https://github.com/jadenjoe/nasconnplus)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20NAS%20%7C%20Docker-lightgrey)](https://github.com/dont-see-big-shark/nas_conn_plus)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](deploy/Dockerfile)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -87,7 +87,7 @@ External Inbound Traffic (Public IPv6 / LAN)
 
 ### Option 1: Standalone Binary (Recommended for Linux / NAS Host)
 
-1. Download the pre-built tarball for your CPU architecture (`amd64`, `arm64`, or `armv7`) from the [Releases page](https://github.com/jadenjoe/nasconnplus/releases).
+1. Download the pre-built tarball for your CPU architecture (`amd64`, `arm64`, or `armv7`) from the [Releases page](https://github.com/dont-see-big-shark/nas_conn_plus/releases).
 2. Extract the archive and install the binary:
    ```bash
    tar -zxvf nasconnplus-linux-amd64.tar.gz
@@ -352,8 +352,8 @@ go install github.com/jadenjoe/nasconnplus/cmd/nasconnplus@latest
 ### Method B: Clone & Build
 ```bash
 # Clone the repository
-git clone https://github.com/jadenjoe/nasconnplus.git
-cd nasconnplus
+git clone https://github.com/dont-see-big-shark/nas_conn_plus.git
+cd nas_conn_plus
 
 # Build binary for current platform
 make build
@@ -373,9 +373,8 @@ make release
 - [x] 3-tier certificate management (ACME Let's Encrypt, custom cert hot-reload, ECDSA 10-year self-signed fallback)
 - [x] Local Unix Domain Socket live dashboard (`nasconnplus status`)
 - [x] Terminal ergonomics & single-run diagnostic reporting (`-t` mode)
-- [ ] 📊 Lightweight WebUI for real-time connection topology and throughput graphs
-- [ ] 🌐 UDP port IPv6 mirroring and relaying support
 - [ ] 🔑 ACME DNS-01 challenge support for automated wildcard certificates behind blocked port 80/443
+- [ ] 🌐 UDP port IPv6 mirroring and relaying support
 - [ ] 🎯 SNI-based domain-level virtual host routing
 
 ---
@@ -388,8 +387,8 @@ We warmly welcome community contributions! Whether submitting bug reports, sugge
 - 🛡️ **Security Policy**: See [SECURITY.md](SECURITY.md) for responsible vulnerability disclosure.
 - 📝 **Changelog**: See [CHANGELOG.md](CHANGELOG.md) for release history.
 - 🐛 **Issues**:
-  - [Report a Bug](https://github.com/jadenjoe/nasconnplus/issues/new?template=bug_report.md)
-  - [Request a Feature](https://github.com/jadenjoe/nasconnplus/issues/new?template=feature_request.md)
+  - [Report a Bug](https://github.com/dont-see-big-shark/nas_conn_plus/issues/new?template=bug_report.md)
+  - [Request a Feature](https://github.com/dont-see-big-shark/nas_conn_plus/issues/new?template=feature_request.md)
 
 ---
 

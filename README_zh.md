@@ -5,12 +5,12 @@
 **专为 NAS 与家庭自建服务打造的轻量级连接增强工具**  
 *突破 IPv4 大内网限制 · 自动 IPv6 中继 · 端口 +1 无感升级 HTTPS*
 
-[![CI](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml/badge.svg)](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/Coverage-82.1%25-brightgreen.svg?logo=codecov)](https://github.com/jadenjoe/nasconnplus)
-[![Go Report Card](https://goreportcard.com/badge/github.com/jadenjoe/nasconnplus)](https://goreportcard.com/report/github.com/jadenjoe/nasconnplus)
-[![Latest Release](https://img.shields.io/github/v/release/jadenjoe/nasconnplus?logo=github&color=3388ff)](https://github.com/jadenjoe/nasconnplus/releases)
+[![CI](https://github.com/dont-see-big-shark/nas_conn_plus/actions/workflows/ci.yml/badge.svg)](https://github.com/dont-see-big-shark/nas_conn_plus/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/Coverage-82.1%25-brightgreen.svg?logo=codecov)](https://github.com/dont-see-big-shark/nas_conn_plus)
+[![Go Report Card](https://goreportcard.com/badge/github.com/dont-see-big-shark/nas_conn_plus)](https://goreportcard.com/report/github.com/dont-see-big-shark/nas_conn_plus)
+[![Version](https://img.shields.io/badge/Version-v1.0.0-3388ff?logo=github)](https://github.com/dont-see-big-shark/nas_conn_plus/releases)
 [![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.22-00ADD8?logo=go)](https://golang.org)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20NAS%20%7C%20Docker-lightgrey)](https://github.com/jadenjoe/nasconnplus)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20NAS%20%7C%20Docker-lightgrey)](https://github.com/dont-see-big-shark/nas_conn_plus)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](deploy/Dockerfile)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -84,7 +84,7 @@
 
 ### 方式 1：二进制直接运行（推荐 Linux / NAS 宿主机）
 
-1. 从 [Releases 页面](https://github.com/jadenjoe/nasconnplus/releases) 下载适合你架构的预编译包（支持 `amd64` / `arm64` / `armv7`）。
+1. 从 [Releases 页面](https://github.com/dont-see-big-shark/nas_conn_plus/releases) 下载适合你架构的预编译包（支持 `amd64` / `arm64` / `armv7`）。
 2. 解压并赋予执行权限：
    ```bash
    tar -zxvf nasconnplus-linux-amd64.tar.gz
@@ -349,8 +349,8 @@ go install github.com/jadenjoe/nasconnplus/cmd/nasconnplus@latest
 ### 方式 B：源码本地编译
 ```bash
 # 克隆仓库代码
-git clone https://github.com/jadenjoe/nasconnplus.git
-cd nasconnplus
+git clone https://github.com/dont-see-big-shark/nas_conn_plus.git
+cd nas_conn_plus
 
 # 编译当前平台二进制
 make build
@@ -372,9 +372,8 @@ make release
 - [x] 三级证书安全管理（Let's Encrypt 自动续签、外部证书热重载、ECDSA 10年自签证书兜底）
 - [x] 本地 Unix Domain Socket 实时状态大盘（`nasconnplus status`）
 - [x] 终端人体工程学美化与单次诊断报表（`-t` 模式）
-- [ ] 📊 轻量级 WebUI 实时拓扑监控面板与吞吐图表
-- [ ] 🌐 UDP 端口 IPv6 镜像与中继转发支持
 - [ ] 🔑 ACME DNS-01 验证支持（针对家庭宽带封锁 80/443 端口场景自动申请泛域名证书）
+- [ ] 🌐 UDP 端口 IPv6 镜像与中继转发支持
 - [ ] 🎯 SNI 域名级智能多证书路由与虚拟主机支持
 
 ---
@@ -387,8 +386,8 @@ make release
 - 🛡️ **安全政策**：若发现潜在安全漏洞，请阅读 [SECURITY.md](SECURITY.md) 获取负责任披露指引。
 - 📝 **版本记录**：查看 [CHANGELOG.md](CHANGELOG.md) 获取最新更新历史。
 - 🐛 **提交反馈**：
-  - [提交 Bug 报告](https://github.com/jadenjoe/nasconnplus/issues/new?template=bug_report.md)
-  - [提出新功能建议](https://github.com/jadenjoe/nasconnplus/issues/new?template=feature_request.md)
+  - [提交 Bug 报告](https://github.com/dont-see-big-shark/nas_conn_plus/issues/new?template=bug_report.md)
+  - [提出新功能建议](https://github.com/dont-see-big-shark/nas_conn_plus/issues/new?template=feature_request.md)
 
 ---
 

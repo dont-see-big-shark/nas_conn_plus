@@ -20,8 +20,8 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/jadenjoe/nasconnplus.git
-cd nasconnplus
+git clone https://github.com/dont-see-big-shark/nas_conn_plus.git
+cd nas_conn_plus
 
 # 验证依赖
 go mod verify
@@ -92,5 +92,5 @@ make lint
 
 ## 🐛 遇到问题或有新想法？
 
-- 发现了 Bug？请在 [Issues](https://github.com/jadenjoe/nasconnplus/issues) 中提交并附带复现步骤与环境信息。
+- 发现了 Bug？请在 [Issues](https://github.com/dont-see-big-shark/nas_conn_plus/issues) 中提交并附带复现步骤与环境信息。
 - 有关于架构或未来规划的想法？欢迎在 GitHub Discussions 或 Issue 中发起讨论。
