@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.1] - 2026-09-03
+
+### Changed
+- **Go Module Path Alignment**: Refactored module path from placeholder to canonical `github.com/dont-see-big-shark/nas_conn_plus` across all packages, imports, build scripts, Dockerfile, CI/CD release workflow, and documentation.
+- **Go Ecosystem Distribution**: Enabled one-line worldwide installation via `go install github.com/dont-see-big-shark/nas_conn_plus/cmd/nasconnplus@latest` and indexing on `pkg.go.dev`.
+
+---
+
 ## [1.0.0] - 2026-09-03
 
 ### Features & Capabilities

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/jadenjoe/nasconnplus/internal/proxy"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/proxy"
 )
 
 // DefaultSocketPath returns the secure Unix domain socket location.

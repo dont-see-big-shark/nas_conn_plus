@@ -343,7 +343,7 @@ make lint
 
 ### 方式 A：`go install` 一键全局安装
 ```bash
-go install github.com/jadenjoe/nasconnplus/cmd/nasconnplus@latest
+go install github.com/dont-see-big-shark/nas_conn_plus/cmd/nasconnplus@latest
 ```
 
 ### 方式 B：源码本地编译

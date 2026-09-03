@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jadenjoe/nasconnplus/internal/proxy"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/proxy"
 )
 
 func TestIPC_QueryAndRender(t *testing.T) {

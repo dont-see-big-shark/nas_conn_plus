@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jadenjoe/nasconnplus/internal/cert"
-	"github.com/jadenjoe/nasconnplus/internal/config"
-	"github.com/jadenjoe/nasconnplus/internal/logger"
-	"github.com/jadenjoe/nasconnplus/internal/proxy"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/cert"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/config"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/logger"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/proxy"
 )
 
 func TestApp_RunReconcile(t *testing.T) {

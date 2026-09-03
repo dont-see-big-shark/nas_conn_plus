@@ -1,7 +1,7 @@
 BINARY_NAME := nasconnplus
-VERSION ?= 1.0.0
+VERSION ?= 1.0.1
 BUILD_DATE := $(shell date -u +'%Y-%m-%d')
-LDFLAGS := -s -w -X 'github.com/jadenjoe/nasconnplus/internal/app.Version=$(VERSION)' -X 'github.com/jadenjoe/nasconnplus/internal/app.BuildDate=$(BUILD_DATE)'
+LDFLAGS := -s -w -X 'github.com/dont-see-big-shark/nas_conn_plus/internal/app.Version=$(VERSION)' -X 'github.com/dont-see-big-shark/nas_conn_plus/internal/app.BuildDate=$(BUILD_DATE)'
 
 .PHONY: all build clean test coverage test-coverage vet lint run docker-build release
 

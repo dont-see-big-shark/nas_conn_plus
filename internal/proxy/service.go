@@ -18,10 +18,10 @@ import (
 	"time"
 
 	"github.com/inetaf/tcpproxy"
-	"github.com/jadenjoe/nasconnplus/internal/cert"
-	"github.com/jadenjoe/nasconnplus/internal/config"
-	"github.com/jadenjoe/nasconnplus/internal/logger"
-	"github.com/jadenjoe/nasconnplus/internal/scanner"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/cert"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/config"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/logger"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/scanner"
 )
 
 // Zero-allocation buffer pool for reverse proxy to minimize GC churn
@@ -702,6 +702,7 @@ func (w *countingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return hj.Hijack()
 }
 
+//nolint:staticcheck // SA1019 preserved for backwards compatibility with legacy HTTP handlers
 func (w *countingResponseWriter) CloseNotify() <-chan bool {
 	if cn, ok := w.ResponseWriter.(http.CloseNotifier); ok {
 		return cn.CloseNotify()
@@ -712,7 +713,10 @@ func (w *countingResponseWriter) CloseNotify() <-chan bool {
 func (w *countingResponseWriter) ReadFrom(r io.Reader) (int64, error) {
 	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
 		n, err := rf.ReadFrom(r)
-		w.written.Add(uint64(n))
+		if n > 0 {
+			//nolint:gosec // G115: n is positive
+			w.written.Add(uint64(n))
+		}
 		return n, err
 	}
 	n, err := io.Copy(w, r)

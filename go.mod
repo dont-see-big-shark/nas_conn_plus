@@ -1,4 +1,4 @@
-module github.com/jadenjoe/nasconnplus
+module github.com/dont-see-big-shark/nas_conn_plus
 
 go 1.25.0
 

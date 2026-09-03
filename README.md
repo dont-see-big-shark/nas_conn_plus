@@ -346,7 +346,7 @@ Prerequisites: Go (>= 1.22) installed locally.
 
 ### Method A: One-line `go install`
 ```bash
-go install github.com/jadenjoe/nasconnplus/cmd/nasconnplus@latest
+go install github.com/dont-see-big-shark/nas_conn_plus/cmd/nasconnplus@latest
 ```
 
 ### Method B: Clone & Build

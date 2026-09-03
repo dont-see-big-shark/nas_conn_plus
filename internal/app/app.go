@@ -12,16 +12,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jadenjoe/nasconnplus/internal/cert"
-	"github.com/jadenjoe/nasconnplus/internal/config"
-	"github.com/jadenjoe/nasconnplus/internal/ipc"
-	"github.com/jadenjoe/nasconnplus/internal/logger"
-	"github.com/jadenjoe/nasconnplus/internal/proxy"
-	"github.com/jadenjoe/nasconnplus/internal/scanner"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/cert"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/config"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/ipc"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/logger"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/proxy"
+	"github.com/dont-see-big-shark/nas_conn_plus/internal/scanner"
 )
 
 var (
-	Version   = "1.0.0"
+	Version   = "1.0.1"
 	BuildDate = "2026-09-03"
 )
 

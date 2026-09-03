@@ -6,9 +6,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-ARG VERSION=1.0.0
+ARG VERSION=1.0.1
 ARG BUILD_DATE=""
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X 'github.com/jadenjoe/nasconnplus/internal/app.Version=${VERSION}' -X 'github.com/jadenjoe/nasconnplus/internal/app.BuildDate=${BUILD_DATE}'" -o nasconnplus ./cmd/nasconnplus
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X 'github.com/dont-see-big-shark/nas_conn_plus/internal/app.Version=${VERSION}' -X 'github.com/dont-see-big-shark/nas_conn_plus/internal/app.BuildDate=${BUILD_DATE}'" -o nasconnplus ./cmd/nasconnplus
 
 # Stage 2: Ultra-lean Runtime image (< 15MB)
 FROM alpine:3.24
