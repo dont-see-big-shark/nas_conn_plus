@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -259,14 +260,18 @@ func (s *Service) Reconcile(res *scanner.Result) {
 	if s.cfg.HTTPSAuto != nil && *s.cfg.HTTPSAuto {
 		allActivePorts := make(map[int]bool)
 		for port := range res.V4Wild {
-			// CRITICAL: Never treat our own listener ports as new HTTP targets to upgrade!
-			if !s.isOurListenerPortLocked(port) && !s.isExcluded(port) && s.isHTTPSAllowed(port) {
+			// CRITICAL: Never treat our own non-relay listener ports as new HTTP
+			// targets to upgrade. Relay-owned ports are real v4-only backends and
+			// remain valid HTTP upgrade candidates.
+			if (!s.isOurListenerPortLocked(port) || s.isOurListener("relay", port)) && !s.isExcluded(port) && s.isHTTPSAllowed(port) {
 				allActivePorts[port] = true
 			}
 		}
 		for port := range res.V6Any {
-			// CRITICAL: Never treat our own listener ports as new HTTP targets to upgrade!
-			if !s.isOurListenerPortLocked(port) && !s.isExcluded(port) && s.isHTTPSAllowed(port) {
+			// CRITICAL: Never treat our own non-relay listener ports as new HTTP
+			// targets to upgrade. Relay-owned ports are real v4-only backends and
+			// remain valid HTTP upgrade candidates.
+			if (!s.isOurListenerPortLocked(port) || s.isOurListener("relay", port)) && !s.isExcluded(port) && s.isHTTPSAllowed(port) {
 				allActivePorts[port] = true
 			}
 		}
@@ -323,8 +328,10 @@ func (s *Service) Reconcile(res *scanner.Result) {
 			if s.isExcluded(port) || !s.isRelayAllowed(port) || res.V6Others[port] {
 				continue
 			}
-			// Do not relay our own listener ports
-			if s.isOurListenerPortLocked(port) {
+			// Do not relay ports already claimed by our own non-relay listeners
+			// (e.g. an HTTPS listener on :P). A relay's own port must remain a
+			// desired target, otherwise it would be recycled every reconcile.
+			if s.isOurListenerPortLocked(port) && !s.isOurListener("relay", port) {
 				continue
 			}
 			wants[key("relay", port)] = want{
@@ -678,6 +685,37 @@ func (w *countingResponseWriter) Write(b []byte) (int, error) {
 	if n > 0 {
 		w.written.Add(uint64(n))
 	}
+	return n, err
+}
+
+func (w *countingResponseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *countingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("underlying ResponseWriter does not implement http.Hijacker")
+	}
+	return hj.Hijack()
+}
+
+func (w *countingResponseWriter) CloseNotify() <-chan bool {
+	if cn, ok := w.ResponseWriter.(http.CloseNotifier); ok {
+		return cn.CloseNotify()
+	}
+	return nil
+}
+
+func (w *countingResponseWriter) ReadFrom(r io.Reader) (int64, error) {
+	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
+		n, err := rf.ReadFrom(r)
+		w.written.Add(uint64(n))
+		return n, err
+	}
+	n, err := io.Copy(w, r)
 	return n, err
 }
 
