@@ -80,81 +80,49 @@
 
 ---
 
-## 🚦 快速开始
+## 🚦 快速安装与使用
 
-### 方式 1：二进制直接运行（推荐 Linux / NAS 宿主机）
+提供多种灵活的安装部署方式：
 
-1. 从 [Releases 页面](https://github.com/dont-see-big-shark/nas_conn_plus/releases) 下载适合你架构的预编译包（支持 `amd64` / `arm64` / `armv7`）。
-2. 解压并赋予执行权限：
-   ```bash
-   tar -zxvf nasconnplus-linux-amd64.tar.gz
-   sudo mv nasconnplus /usr/local/bin/
-   ```
-3. 诊断测试（查看当前主机的端口分布情况）：
-   ```bash
-   sudo nasconnplus -t
-   ```
-4. 启动服务（首次运行会自动在当前目录或 `/etc/nasconnplus/` 生成默认配置文件）：
-   ```bash
-   sudo nasconnplus -c /etc/nasconnplus/config.json
-   ```
+### 方式 1：Homebrew 一键安装（macOS 与 Linux 推荐）
+
+```bash
+# 添加官方 Tap
+brew tap dont-see-big-shark/tap
+
+# 安装 nasconn+
+brew install nasconnplus
+
+# （可选）注册为系统后台自启常驻服务
+brew services start nasconnplus
+```
 
 ---
 
-### 方式 2：Systemd 后台常驻服务
+### 方式 2：Docker / Docker Compose 容器化部署（各大 NAS 系统推荐）
 
-为了让 `nasconn+` 在 NAS 或 Linux 服务器开机自启且在后台稳定常驻，推荐使用 Systemd：
+官方预编译多架构镜像（支持 `linux/amd64`、`linux/arm64`、`linux/arm/v7`）已自动发布至 GitHub Container Registry：
 
-1. 创建配置文件目录并放入配置：
-   ```bash
-   sudo mkdir -p /etc/nasconnplus
-   sudo cp config.example.json /etc/nasconnplus/config.json
-   ```
-2. 安装服务单元：
-   ```bash
-   sudo cp deploy/nasconnplus.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   ```
-3. 启动并设置开机自启：
-   ```bash
-   sudo systemctl enable --now nasconnplus
-   ```
-4. 查看运行状态与日志：
-   ```bash
-   sudo systemctl status nasconnplus
-   journalctl -u nasconnplus -f
-   ```
+#### 一键 Docker 命令运行：
+```bash
+docker run -d \
+  --name nasconnplus \
+  --network host \
+  --restart unless-stopped \
+  --cap-drop ALL \
+  --cap-add NET_BIND_SERVICE \
+  -v /etc/nasconnplus:/etc/nasconnplus \
+  -v /run/nasconnplus:/run/nasconnplus \
+  ghcr.io/dont-see-big-shark/nas_conn_plus:latest
+```
 
----
-
-### 方式 3：Docker / Docker Compose 一键部署
-
-对于极空间、飞牛私有云 (fnOS)、绿联 (UGOS)、群晖 (Synology)、Unraid 等 NAS 系统，推荐使用 Docker Compose 快速部署。
-
-> [!IMPORTANT]
-> #### ⚠️ Docker 部署 4 大核心注意事项（必读避坑指南）
-> `nasconn+` 属于**底层网络基础设施**工具，需在宿主机嗅探端口并对外开放 IPv6/HTTPS 监听，容器配置建议遵循最小权限原则：
-> 
-> 1. **必须配置 `network_mode: host`**：
->    Docker 默认的 `bridge`（桥接）网络会将容器隔离在独立虚拟子网中，导致容器**无法感知宿主机的 0.0.0.0 端口**，也无法直接在宿主机的公网 IPv6 上开放中继。必须使用 Host 主机网络。
-> 2. **无需特权模式与宿主机 PID 命名空间（最小权限）**：
->    `nasconn+` 创新性地采用 `/proc/self/fd` 套接字 inode 比对技术，完全消除了对 `pid: host`、`privileged: true` 及 `CAP_SYS_PTRACE` 的依赖。只需保留 `CAP_NET_BIND_SERVICE`（绑定 80/443 等 < 1024 特权端口）。
-> 3. **必须挂载数据卷持久化存储**：
->    容器必须挂载持久化目录（如 `./tls` 和 `./acme_cache`）。如果不挂载，每次容器更新或重启都会重新生成证书，导致浏览器因 SSL 证书指纹变更而报错拦截。另外挂载 `/run/nasconnplus` 可供宿主机 CLI 快速通信。
-> 4. **路由器 IPv6 防火墙放行（入站规则）**：
->    即使容器成功在中继了端口，若主路由器（光猫）默认拦截了入站流量，外网仍然无法连接。请在路由器设置中为 NAS 设备放行对应的 IPv6 入站端口。
-
-#### `docker-compose.yml` 生产级配置：
-
+#### 生产级 `docker-compose.yml` 配置：
 ```yaml
 version: '3.8'
 
 services:
   nasconnplus:
-    image: nasconnplus:latest
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile
+    image: ghcr.io/dont-see-big-shark/nas_conn_plus:latest
     container_name: nasconnplus
     restart: unless-stopped
 
@@ -185,10 +153,41 @@ services:
       - TZ=Asia/Shanghai
 ```
 
-运行容器：
+启动容器：
 ```bash
 docker compose up -d
 ```
+
+---
+
+### 方式 3：`go install` 一键全局安装
+
+本地环境配置了 Go（>= 1.22）时，可直接通过 Go 官方工具链安装：
+```bash
+go install github.com/dont-see-big-shark/nas_conn_plus/cmd/nasconnplus@latest
+```
+
+---
+
+### 方式 4：二进制直接运行与 Systemd 服务（Linux 宿主机）
+
+1. 从 [Releases 页面](https://github.com/dont-see-big-shark/nas_conn_plus/releases) 下载预编译包（支持 `amd64` / `arm64` / `armv7`）。
+2. 解压并安装到系统路径：
+   ```bash
+   tar -zxvf nasconnplus-linux-amd64.tar.gz
+   sudo mv nasconnplus /usr/local/bin/
+   ```
+3. 快速检测本地端口：
+   ```bash
+   sudo nasconnplus -t
+   ```
+4. 注册为 Systemd 开机自启常驻服务：
+   ```bash
+   sudo mkdir -p /etc/nasconnplus
+   sudo cp config.example.json /etc/nasconnplus/config.json
+   sudo cp deploy/nasconnplus.service /etc/systemd/system/
+   sudo systemctl daemon-reload && sudo systemctl enable --now nasconnplus
+   ```
 
 ---
 

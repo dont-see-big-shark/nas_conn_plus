@@ -83,81 +83,49 @@ External Inbound Traffic (Public IPv6 / LAN)
 
 ---
 
-## 🚦 Quick Start
+## 🚦 Quick Start & Installation
 
-### Option 1: Standalone Binary (Recommended for Linux / NAS Host)
+Choose your preferred installation method:
 
-1. Download the pre-built tarball for your CPU architecture (`amd64`, `arm64`, or `armv7`) from the [Releases page](https://github.com/dont-see-big-shark/nas_conn_plus/releases).
-2. Extract the archive and install the binary:
-   ```bash
-   tar -zxvf nasconnplus-linux-amd64.tar.gz
-   sudo mv nasconnplus /usr/local/bin/
-   ```
-3. Run a diagnostic check to inspect the host's current listening ports:
-   ```bash
-   sudo nasconnplus -t
-   ```
-4. Start the daemon (a default configuration file is automatically created on first launch):
-   ```bash
-   sudo nasconnplus -c /etc/nasconnplus/config.json
-   ```
+### Method 1: Homebrew (macOS & Linux)
+
+```bash
+# Add the official tap
+brew tap dont-see-big-shark/tap
+
+# Install nasconn+
+brew install nasconnplus
+
+# (Optional) Run automatically as a background daemon
+brew services start nasconnplus
+```
 
 ---
 
-### Option 2: Systemd Daemon Service
+### Method 2: Docker / Docker Compose (NAS Platforms)
 
-To ensure `nasconn+` starts on boot and runs reliably in the background:
+Pre-built multi-arch images (`linux/amd64`, `linux/arm64`, `linux/arm/v7`) are available on GitHub Container Registry:
 
-1. Create the configuration directory and copy the default config:
-   ```bash
-   sudo mkdir -p /etc/nasconnplus
-   sudo cp config.example.json /etc/nasconnplus/config.json
-   ```
-2. Install and register the systemd unit:
-   ```bash
-   sudo cp deploy/nasconnplus.service /etc/systemd/system/
-   sudo systemctl daemon-reload
-   ```
-3. Enable and start the service:
-   ```bash
-   sudo systemctl enable --now nasconnplus
-   ```
-4. Check service status and live logs:
-   ```bash
-   sudo systemctl status nasconnplus
-   journalctl -u nasconnplus -f
-   ```
-
----
-
-### Option 3: Docker & Docker Compose
-
-For containerized NAS platforms like Synology, fnOS, UGREEN UGOS, ZimaOS, and Unraid:
-
-> [!IMPORTANT]
-> #### ⚠️ 4 Crucial Docker Considerations
-> `nasconn+` operates as low-level networking infrastructure. For optimal performance and safety:
-> 
-> 1. **Must use `network_mode: host`**:
->    Docker's default bridge network isolates containers inside a virtual subnet. This prevents `nasconn+` from seeing the host's `0.0.0.0` listeners or binding to the host's public IPv6 address.
-> 2. **Least-Privilege Security (No Privileged Mode / No Host PID)**:
->    `nasconn+` inspects `/proc/self/fd` socket inodes natively, entirely eliminating the need for `pid: host`, `privileged: true`, or `CAP_SYS_PTRACE`. It only requires `CAP_NET_BIND_SERVICE` to bind privileged ports (< 1024, like 80/443).
-> 3. **Mount Persistent Volumes**:
->    Always mount `./tls` and `./acme_cache`. Without persistent storage, certificates will be regenerated on every container restart, causing SSL certificate fingerprint mismatch warnings in browsers. Mount `/run/nasconnplus` for host CLI IPC communication.
-> 4. **Router Inbound IPv6 Firewall Rules**:
->    If your router's firewall blocks unsolicited incoming IPv6 traffic by default, open the necessary inbound IPv6 ports directed to your NAS.
+#### One-line Docker Run:
+```bash
+docker run -d \
+  --name nasconnplus \
+  --network host \
+  --restart unless-stopped \
+  --cap-drop ALL \
+  --cap-add NET_BIND_SERVICE \
+  -v /etc/nasconnplus:/etc/nasconnplus \
+  -v /run/nasconnplus:/run/nasconnplus \
+  ghcr.io/dont-see-big-shark/nas_conn_plus:latest
+```
 
 #### Production `docker-compose.yml`:
-
 ```yaml
 version: '3.8'
 
 services:
   nasconnplus:
-    image: nasconnplus:latest
-    build:
-      context: .
-      dockerfile: deploy/Dockerfile
+    image: ghcr.io/dont-see-big-shark/nas_conn_plus:latest
     container_name: nasconnplus
     restart: unless-stopped
 
@@ -192,6 +160,37 @@ Run the container:
 ```bash
 docker compose up -d
 ```
+
+---
+
+### Method 3: One-line `go install`
+
+If Go (>= 1.22) is installed:
+```bash
+go install github.com/dont-see-big-shark/nas_conn_plus/cmd/nasconnplus@latest
+```
+
+---
+
+### Method 4: Standalone Binary & Systemd Service
+
+1. Download the pre-built tarball for your CPU architecture (`amd64`, `arm64`, or `armv7`) from the [Releases page](https://github.com/dont-see-big-shark/nas_conn_plus/releases).
+2. Extract and install the binary:
+   ```bash
+   tar -zxvf nasconnplus-linux-amd64.tar.gz
+   sudo mv nasconnplus /usr/local/bin/
+   ```
+3. Test your host's current listening ports:
+   ```bash
+   sudo nasconnplus -t
+   ```
+4. Enable and start as a systemd background daemon:
+   ```bash
+   sudo mkdir -p /etc/nasconnplus
+   sudo cp config.example.json /etc/nasconnplus/config.json
+   sudo cp deploy/nasconnplus.service /etc/systemd/system/
+   sudo systemctl daemon-reload && sudo systemctl enable --now nasconnplus
+   ```
 
 ---
 

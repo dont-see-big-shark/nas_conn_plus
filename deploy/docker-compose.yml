@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    image: nasconnplus:latest
+    image: ghcr.io/dont-see-big-shark/nas_conn_plus:latest
     container_name: nasconnplus
     restart: unless-stopped
     # IMPORTANT: nasconnplus requires host networking to inspect host listening ports
