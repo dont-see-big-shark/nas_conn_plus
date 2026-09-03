@@ -5,6 +5,7 @@
   "_comment_relay": "自动将仅监听 IPv4 (0.0.0.0) 的端口镜像至 IPv6 ([::])",
   "relay": {
     "auto": true,
+    "mode": "auto",
     "zero_copy": true,
     "exclude": [
       22,
@@ -13,12 +14,13 @@
   },
   "_comment_https": "全自动嗅探本地 HTTP 服务并在 端口+1 建立带证书的 HTTPS 代理通道",
   "https_auto": true,
+  "https_mode": "auto",
   "https_exclude": [
     22,
     53
   ],
   "_comment_advanced": "=== 以下为可选高级配置（平时无需配置） ===",
-  "_optional_white_list": "可选白名单模式: \"relay\": {\"allow\": [8080]}, \"https_allow\": [8080]",
+  "_optional_whitelist_mode": "严格白名单模式: \"relay\": {\"mode\": \"whitelist\", \"allow\": [8080]}, \"https_mode\": \"whitelist\", \"https_allow\": [8080]",
   "_optional_zero_copy": "开启纯内核 splice(2) 零拷贝: \"relay\": {\"zero_copy\": true}",
   "_optional_hsts": "公信证书下启用 HSTS: \"hsts\": {\"enabled\": true, \"max_age\": 31536000}",
   "_optional_custom_https": "固定端口映射: \"https\": [{\"name\": \"网盘\", \"http\": 8080, \"https\": 8443}]",

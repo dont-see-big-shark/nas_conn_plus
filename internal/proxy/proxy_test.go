@@ -734,6 +734,23 @@ func TestProxy_AllowLists_And_Handover(t *testing.T) {
 	if s.isHTTPSAllowed(9091) {
 		t.Error("expected 9091 rejected by https allow list")
 	}
+
+	// Test Mode = "whitelist" with empty allow list -> rejects everything
+	cfgWhitelist := &config.Config{
+		Relay: config.RelayCfg{
+			Mode:  "whitelist",
+			Allow: []int{},
+		},
+		HTTPSMode:  "whitelist",
+		HTTPSAllow: []int{},
+	}
+	sW := &Service{cfg: cfgWhitelist}
+	if sW.isRelayAllowed(8080) {
+		t.Error("expected 8080 rejected in empty whitelist mode")
+	}
+	if sW.isHTTPSAllowed(9090) {
+		t.Error("expected 9090 rejected in empty whitelist mode")
+	}
 }
 
 func TestProxy_CountingReadCloser_And_ResponseWriter(t *testing.T) {

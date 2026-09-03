@@ -4,6 +4,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
+	_ "net/http/pprof" // #nosec G108 - pprof endpoint is only bound when user explicitly provides --debug-addr
 	"os"
 	"os/signal"
 	"runtime"
@@ -37,6 +39,7 @@ func Run() {
 	flag.BoolVar(versionFlag, "version", false, "Show version and build info (alias for -v)")
 
 	socketFlag := flag.String("socket", "", "Path to IPC Unix domain socket (default: automatic)")
+	debugAddrFlag := flag.String("debug-addr", "", "Enable pprof HTTP debug server on specified address (e.g. 127.0.0.1:6060, default disabled)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] [command]\n\nCommands:\n  status       Query running daemon status\n\nOptions:\n", os.Args[0])
@@ -184,6 +187,24 @@ func Run() {
 		log.Warn("IPC status server unavailable at %s: %v", sockPath, err)
 	} else {
 		defer ipcServer.Close()
+	}
+
+	if *debugAddrFlag != "" {
+		debugSrv := &http.Server{
+			Addr:              *debugAddrFlag,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		go func() {
+			log.Info("pprof debug server active on http://%s/debug/pprof/", *debugAddrFlag)
+			if err := debugSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Warn("pprof debug server error: %v", err)
+			}
+		}()
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer shutdownCancel()
+			_ = debugSrv.Shutdown(shutdownCtx)
+		}()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

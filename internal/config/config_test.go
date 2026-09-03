@@ -260,6 +260,25 @@ func TestLoadConfig_AllowAndHSTS(t *testing.T) {
 	if !cfg.HSTS.Enabled || cfg.HSTS.MaxAge != 31536000 {
 		t.Errorf("expected default HSTS MaxAge 31536000, got %d", cfg.HSTS.MaxAge)
 	}
+	if cfg.Relay.Mode != "auto" {
+		t.Errorf("expected default relay mode 'auto', got %q", cfg.Relay.Mode)
+	}
+	if cfg.HTTPSMode != "auto" {
+		t.Errorf("expected default https mode 'auto', got %q", cfg.HTTPSMode)
+	}
+
+	// Test invalid modes
+	invalidRelayMode := filepath.Join(tempDir, "invalid_relay_mode.json")
+	_ = os.WriteFile(invalidRelayMode, []byte(`{"relay": {"mode": "invalid"}}`), 0o600)
+	if _, err := LoadConfig(invalidRelayMode); err == nil {
+		t.Error("expected error for invalid relay.mode")
+	}
+
+	invalidHTTPSMode := filepath.Join(tempDir, "invalid_https_mode.json")
+	_ = os.WriteFile(invalidHTTPSMode, []byte(`{"https_mode": "invalid"}`), 0o600)
+	if _, err := LoadConfig(invalidHTTPSMode); err == nil {
+		t.Error("expected error for invalid https_mode")
+	}
 }
 
 

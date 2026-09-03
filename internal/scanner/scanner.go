@@ -104,10 +104,9 @@ func newResult() *Result {
 	}
 }
 
-func getSelfSocketInodes() map[string]bool {
+func getSelfSocketInodesWith(fdDir string) map[string]bool {
 	inodes := make(map[string]bool)
-	fdDir := "/proc/self/fd"
-	fds, err := os.ReadDir(fdDir)
+	fds, err := os.ReadDir(filepath.Clean(fdDir))
 	if err != nil {
 		return inodes
 	}
@@ -125,8 +124,12 @@ func getSelfSocketInodes() map[string]bool {
 }
 
 func scanProcFS() (*Result, error) {
+	return scanProcFSWith("/proc", "/proc/self/fd")
+}
+
+func scanProcFSWith(procRoot, selfFdDir string) (*Result, error) {
 	mypid := os.Getpid()
-	selfInodes := getSelfSocketInodes()
+	selfInodes := getSelfSocketInodesWith(selfFdDir)
 
 	res := newResult()
 
@@ -134,21 +137,24 @@ func scanProcFS() (*Result, error) {
 	missingInodes := false
 	inodeMap := getCachedInodes()
 
-	if err := parseProcNetFile("/proc/net/tcp", false, res, mypid, selfInodes, inodeMap, &missingInodes); err != nil {
+	tcpPath := filepath.Join(procRoot, "net/tcp")
+	tcp6Path := filepath.Join(procRoot, "net/tcp6")
+
+	if err := parseProcNetFile(tcpPath, false, res, mypid, selfInodes, inodeMap, &missingInodes); err != nil {
 		return nil, err
 	}
-	if err := parseProcNetFile("/proc/net/tcp6", true, res, mypid, selfInodes, inodeMap, &missingInodes); err != nil {
+	if err := parseProcNetFile(tcp6Path, true, res, mypid, selfInodes, inodeMap, &missingInodes); err != nil {
 		return nil, err
 	}
 
 	// If new sockets appeared that weren't in our cache, refresh cache and re-populate with a clean Result
 	if missingInodes {
-		inodeMap = refreshInodeCache()
+		inodeMap = refreshInodeCacheWith(procRoot)
 		res = newResult()
-		if err := parseProcNetFile("/proc/net/tcp", false, res, mypid, selfInodes, inodeMap, nil); err != nil {
+		if err := parseProcNetFile(tcpPath, false, res, mypid, selfInodes, inodeMap, nil); err != nil {
 			return nil, err
 		}
-		if err := parseProcNetFile("/proc/net/tcp6", true, res, mypid, selfInodes, inodeMap, nil); err != nil {
+		if err := parseProcNetFile(tcp6Path, true, res, mypid, selfInodes, inodeMap, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -171,17 +177,17 @@ func getCachedInodes() map[string]procInfo {
 	return copyMap
 }
 
-func refreshInodeCache() map[string]procInfo {
-	newMap := buildInodeToPIDMap()
+func refreshInodeCacheWith(procRoot string) map[string]procInfo {
+	newMap := buildInodeToPIDMapWith(procRoot)
 	inodeMu.Lock()
 	cachedInodes = newMap
 	inodeMu.Unlock()
 	return newMap
 }
 
-func buildInodeToPIDMap() map[string]procInfo {
+func buildInodeToPIDMapWith(procRoot string) map[string]procInfo {
 	inodes := make(map[string]procInfo)
-	procDirs, err := os.ReadDir("/proc")
+	procDirs, err := os.ReadDir(filepath.Clean(procRoot))
 	if err != nil {
 		return inodes
 	}
@@ -197,11 +203,12 @@ func buildInodeToPIDMap() map[string]procInfo {
 
 		// Read process name from /proc/[pid]/comm
 		pName := ""
-		if commBytes, err := os.ReadFile(filepath.Join("/proc", d.Name(), "comm")); err == nil {
+		// #nosec G304 - procRoot is bounded
+		if commBytes, err := os.ReadFile(filepath.Join(procRoot, d.Name(), "comm")); err == nil {
 			pName = strings.TrimSpace(string(commBytes))
 		}
 
-		fdDir := filepath.Join("/proc", d.Name(), "fd")
+		fdDir := filepath.Join(procRoot, d.Name(), "fd")
 		fds, err := os.ReadDir(fdDir)
 		if err != nil {
 			continue
@@ -316,7 +323,10 @@ func scanWithSS() (*Result, error) {
 		return nil, fmt.Errorf("execute ss -tlnp: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 
-	mypid := os.Getpid()
+	return parseSSOutput(string(out), os.Getpid()), nil
+}
+
+func parseSSOutput(out string, mypid int) *Result {
 	res := &Result{
 		V4Wild:   make(map[int]bool),
 		V6Any:    make(map[int]bool),
@@ -325,7 +335,7 @@ func scanWithSS() (*Result, error) {
 		Names:    make(map[int]string),
 	}
 
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 4 || fields[0] != "LISTEN" {
 			continue
@@ -364,7 +374,7 @@ func scanWithSS() (*Result, error) {
 		}
 	}
 
-	return res, nil
+	return res
 }
 
 func scanWithLsof() (*Result, error) {

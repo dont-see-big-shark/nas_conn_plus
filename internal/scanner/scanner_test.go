@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -325,9 +326,9 @@ func TestDiagnosticReport_Branches(t *testing.T) {
 
 func TestGetSelfSocketInodes(t *testing.T) {
 	// Just verify function executes without panic on any OS
-	inodes := getSelfSocketInodes()
+	inodes := getSelfSocketInodesWith("/proc/self/fd")
 	if inodes == nil {
-		t.Errorf("expected non-nil map from getSelfSocketInodes")
+		t.Errorf("expected non-nil map from getSelfSocketInodesWith")
 	}
 }
 
@@ -342,8 +343,100 @@ func TestInodeCache_Lifecycle(t *testing.T) {
 		t.Errorf("expected test-proc in cached inodes, got %v", m["99999"])
 	}
 
-	_ = refreshInodeCache()
-	_ = buildInodeToPIDMap()
+	_ = refreshInodeCacheWith("/proc")
+	_ = buildInodeToPIDMapWith("/proc")
+}
+
+func TestParseSSOutput(t *testing.T) {
+	sample := `State  Recv-Q Send-Q Local Address:Port  Peer Address:PortProcess
+LISTEN 0      128          0.0.0.0:8080       0.0.0.0:*    users:(("nginx",pid=1234,fd=6))
+LISTEN 0      128             [::]:9090          [::]:*    users:(("node",pid=5678,fd=12))
+LISTEN 0      128                *:80               *:*    users:(("nasconnplus",pid=9999,fd=3))
+LISTEN 0      128          0.0.0.0:bad        0.0.0.0:*
+LISTEN 0      128        no-colon-port        0.0.0.0:*
+NOT_LISTEN 0  128          0.0.0.0:3306       0.0.0.0:*
+`
+	res := parseSSOutput(sample, 9999)
+	if !res.V4Wild[8080] {
+		t.Error("expected 8080 in V4Wild")
+	}
+	if res.PIDs[8080] != 1234 || res.Names[8080] != "nginx" {
+		t.Errorf("expected PID=1234, Name=nginx, got %d, %s", res.PIDs[8080], res.Names[8080])
+	}
+	if !res.V6Any[9090] || !res.V6Others[9090] {
+		t.Error("expected 9090 in V6Any and V6Others")
+	}
+	if !res.V6Any[80] {
+		t.Error("expected 80 in V6Any")
+	}
+	if res.V6Others[80] {
+		t.Error("expected 80 not in V6Others for self pid")
+	}
+}
+
+func TestScanProcFSWith_MockFixtures(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// 1. Create procRoot/net/tcp and procRoot/net/tcp6
+	netDir := filepath.Join(tempDir, "net")
+	if err := os.MkdirAll(netDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	// 00000000:1F90 is 0.0.0.0:8080, inode 50001
+	tcpContent := `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 50001 1 0000000000000000 100 0 0 10 0
+`
+	if err := os.WriteFile(filepath.Join(netDir, "tcp"), []byte(tcpContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// [::]:237A is port 9082, inode 50002
+	tcp6Content := `  sl  local_address                         rem_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000000000000000000000000000:237A 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 50002 1 0000000000000000 100 0 0 10 0
+`
+	if err := os.WriteFile(filepath.Join(netDir, "tcp6"), []byte(tcp6Content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Create procRoot/1234/fd and procRoot/1234/comm
+	pidDir := filepath.Join(tempDir, "1234")
+	if err := os.MkdirAll(filepath.Join(pidDir, "fd"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(pidDir, "comm"), []byte("my-app\n"), 0o600)
+	_ = os.Symlink("socket:[50001]", filepath.Join(pidDir, "fd", "3"))
+
+	// 3. Create selfFdDir with symlink socket:[50002]
+	selfFdDir := filepath.Join(tempDir, "self_fd")
+	if err := os.MkdirAll(selfFdDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Symlink("socket:[50002]", filepath.Join(selfFdDir, "4"))
+
+	// 4. Test getSelfSocketInodesWith
+	selfInodes := getSelfSocketInodesWith(selfFdDir)
+	if !selfInodes["50002"] {
+		t.Errorf("expected 50002 in selfInodes, got %v", selfInodes)
+	}
+
+	// 5. Test scanProcFSWith
+	res, err := scanProcFSWith(tempDir, selfFdDir)
+	if err != nil {
+		t.Fatalf("scanProcFSWith failed: %v", err)
+	}
+	if !res.V4Wild[8080] {
+		t.Errorf("expected 8080 in V4Wild")
+	}
+	if !res.V6Any[9082] {
+		t.Errorf("expected 9082 in V6Any")
+	}
+	if res.V6Others[9082] {
+		t.Errorf("expected 9082 not in V6Others because it matches selfInodes")
+	}
+	if res.Names[8080] != "my-app" || res.PIDs[8080] != 1234 {
+		t.Errorf("expected PID=1234 Name=my-app, got %d %s", res.PIDs[8080], res.Names[8080])
+	}
 }
 
 

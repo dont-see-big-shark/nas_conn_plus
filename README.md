@@ -6,7 +6,7 @@
 *Overcome IPv4 CGNAT · Automated IPv6 Relay · Port+1 Seamless HTTPS Upgrade*
 
 [![CI](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml/badge.svg)](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/Coverage-76.1%25-brightgreen.svg?logo=codecov)](https://github.com/jadenjoe/nasconnplus)
+[![Coverage](https://img.shields.io/badge/Coverage-81.5%25-brightgreen.svg?logo=codecov)](https://github.com/jadenjoe/nasconnplus)
 [![Go Report Card](https://goreportcard.com/badge/github.com/jadenjoe/nasconnplus)](https://goreportcard.com/report/github.com/jadenjoe/nasconnplus)
 [![Latest Release](https://img.shields.io/github/v/release/jadenjoe/nasconnplus?logo=github&color=3388ff)](https://github.com/jadenjoe/nasconnplus/releases)
 [![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.22-00ADD8?logo=go)](https://golang.org)
@@ -251,6 +251,8 @@ Commands:
 Options:
   -c, -config string
         Configuration file path (searches ./config.json, then /etc/nasconnplus/config.json)
+  -debug-addr string
+        Enable pprof HTTP debug profiling server on specified address (e.g. 127.0.0.1:6060, default disabled)
   -s, -status
         Display running daemon status table (alias for `nasconnplus status`)
   -socket string
@@ -296,7 +298,7 @@ Query the background daemon from any terminal shell to view listener health, act
 
 1. **High-Risk Ports Protected by Default**: `nasconn+` maintains an automatic protection list (ports `22, 53, 67, 68, 123, 161, 445, 1883, 2375, 3306, 5432, 6379, 8086, 9000, 9200, 11211, 27017`). User-defined exclusions are merged via union; built-in protections are never wiped out unless explicitly requested via `override_default_excludes: true`.
 2. **Router Firewall Hygiene**: We strongly recommend keeping the default drop policy for unsolicited inbound IPv6 traffic on your main gateway router, opening only the specific public ports you need.
-3. **Whitelist Mode**: In sensitive environments, specify `relay.allow` and `https_allow` arrays to adopt a strict whitelist approach.
+3. **Whitelist Mode**: In sensitive environments, configure `"mode": "whitelist"` and populate `relay.allow` / `https_allow` arrays to adopt a strict whitelist approach.
 4. **Strong Credentials & 2FA**: Ensure any backend service exposed to the public Internet is protected by strong passwords and Multi-Factor Authentication (MFA).
 5. **ACME & HSTS Considerations**:
    - ACME HTTP-01 validation requires public port 80 to be reachable. If your ISP blocks port 80, deploy pre-generated certificates using `cert_config_path` or rely on the internal self-signed generator.
@@ -306,19 +308,19 @@ Query the background daemon from any terminal shell to view listener health, act
 
 ## 🧪 Testing & Quality Assurance
 
-All core business modules are verified with automated unit tests, end-to-end integration tests, and Go's race detector (`-race`), continuously audited by GitHub Actions CI. Total codebase statement coverage stands at **76.1%**:
+All core business modules are verified with automated unit tests, end-to-end integration tests, and Go's race detector (`-race`), continuously audited by GitHub Actions CI. Total codebase statement coverage stands at **81.5%**:
 
 | Package | Responsibility | Statement Coverage | Quality Focus |
 | :--- | :--- | :---: | :--- |
 | `internal/logger` | Structured terminal formatting & multi-channel logger | **100.0%** | Zero race conditions, graceful NO_COLOR fallback |
 | `cmd/nasconnplus` | CLI entry point & binary launcher | **100.0%** | Argument forwarding & lifecycle execution |
-| `internal/config` | Config discovery, recursive parsing & boundary validation | **87.2%** | High-risk port union protection, directory traversal defense |
-| `internal/app` | Daemon lifecycle, signal management & reconciliation loop | **84.7%** | Graceful SIGINT/SIGTERM termination, IPC integration |
+| `internal/scanner` | Linux procfs socket sniffing, HTTP probing & diagnostics | **91.0%** | Zero-dependency procfs parsing, self-inode decoupling |
+| `internal/config` | Config discovery, recursive parsing & boundary validation | **88.3%** | Whitelist modes, high-risk port union protection |
+| `internal/app` | Daemon lifecycle, signal management & reconciliation loop | **85.5%** | Graceful termination, IPC integration, opt-in pprof |
 | `internal/ipc` | Unix Domain Socket client/server IPC communication | **84.2%** | 0600 socket permissions, retry logic, status rendering |
 | `internal/cert` | TLS certificate manager, ECDSA self-signing & ACME | **76.8%** | Live certificate reload, fingerprint caching, SNI fallback |
-| `internal/proxy` | L4 zero-copy TCP relay & L7 HTTPS reverse proxy engine | **69.0%** | Splice zero-copy, connection limiter, HSTS, smooth handover |
-| `internal/scanner` | Linux procfs socket sniffing, HTTP probing & diagnostics | **68.9%** | Zero-dependency procfs parsing, self-inode decoupling |
-| **Total Coverage** | **Entire Codebase Statements** | **`76.1%`** | **Automated CI Validation Across Go Versions** |
+| `internal/proxy` | L4 zero-copy TCP relay & L7 HTTPS reverse proxy engine | **69.3%** | Splice zero-copy, connection limiter, HSTS, smooth handover |
+| **Total Coverage** | **Entire Codebase Statements** | **`81.5%`** | **Automated CI Validation Across Go Versions** |
 
 ### Local Test Execution
 

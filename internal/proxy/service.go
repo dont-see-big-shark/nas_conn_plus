@@ -133,6 +133,17 @@ func (s *Service) isExcluded(port int) bool {
 }
 
 func (s *Service) isRelayAllowed(port int) bool {
+	if s.cfg.Relay.Mode == "whitelist" {
+		if len(s.cfg.Relay.Allow) == 0 {
+			return false
+		}
+		for _, a := range s.cfg.Relay.Allow {
+			if a == port {
+				return true
+			}
+		}
+		return false
+	}
 	if len(s.cfg.Relay.Allow) > 0 {
 		for _, a := range s.cfg.Relay.Allow {
 			if a == port {
@@ -145,6 +156,17 @@ func (s *Service) isRelayAllowed(port int) bool {
 }
 
 func (s *Service) isHTTPSAllowed(port int) bool {
+	if s.cfg.HTTPSMode == "whitelist" {
+		if len(s.cfg.HTTPSAllow) == 0 {
+			return false
+		}
+		for _, a := range s.cfg.HTTPSAllow {
+			if a == port {
+				return true
+			}
+		}
+		return false
+	}
 	if len(s.cfg.HTTPSAllow) > 0 {
 		for _, a := range s.cfg.HTTPSAllow {
 			if a == port {

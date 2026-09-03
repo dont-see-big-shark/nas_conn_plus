@@ -6,7 +6,7 @@
 *突破 IPv4 大内网限制 · 自动 IPv6 中继 · 端口 +1 无感升级 HTTPS*
 
 [![CI](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml/badge.svg)](https://github.com/jadenjoe/nasconnplus/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/Coverage-76.1%25-brightgreen.svg?logo=codecov)](https://github.com/jadenjoe/nasconnplus)
+[![Coverage](https://img.shields.io/badge/Coverage-81.5%25-brightgreen.svg?logo=codecov)](https://github.com/jadenjoe/nasconnplus)
 [![Go Report Card](https://goreportcard.com/badge/github.com/jadenjoe/nasconnplus)](https://goreportcard.com/report/github.com/jadenjoe/nasconnplus)
 [![Latest Release](https://img.shields.io/github/v/release/jadenjoe/nasconnplus?logo=github&color=3388ff)](https://github.com/jadenjoe/nasconnplus/releases)
 [![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.22-00ADD8?logo=go)](https://golang.org)
@@ -248,6 +248,8 @@ Commands:
 Options:
   -c, -config string
         指定配置文件路径（默认先寻找 ./config.json，再寻找 /etc/nasconnplus/config.json）
+  -debug-addr string
+        开启 pprof HTTP 性能分析服务并绑定指定地址（如 127.0.0.1:6060，默认关闭）
   -s, -status
         查询运行中的守护进程状态（等同于 nasconnplus status）
   -socket string
@@ -293,7 +295,7 @@ Options:
 
 1. **默认高危端口保护**：`nasconn+` 内置保护清单（22, 53, 67, 68, 123, 161, 445, 1883, 2375, 3306, 5432, 6379, 8086, 9000, 9200, 11211, 27017）。用户的 `exclude` 配置会自动进行并集合并，无需担心用户手填端口遗漏核心安全防护。
 2. **路由器防火墙**：建议在主路由上对非公开端口（如内网管理口、无密码测试服务）进行 IPv6 入站端口限制。
-3. **白名单模式**：对安全性要求极高的环境，建议配置 `relay.allow` / `https_allow` 显式白名单，仅放行经过评估的服务。
+3. **白名单模式**：对安全性要求极高的环境，建议配置 `"mode": "whitelist"` 并填写 `relay.allow` / `https_allow` 显式白名单，仅放行经过评估的服务。
 4. **安全凭据**：对于暴露在外网的服务，请务必开启强密码、多因素认证（2FA）或访问凭据。
 5. **ACME 证书与 HSTS 考量**：
    - ACME HTTP-01 验证要求宿主机 80 端口能接收公网 Let's Encrypt 质询请求。若运营商封锁 80 端口，请使用外部申请的证书并配置 `cert_config_path` 或使用内置自签证书。
@@ -303,19 +305,19 @@ Options:
 
 ## 🧪 测试与质量保证 (Testing & Quality)
 
-本项目核心业务模块均编写了自动化单元测试、集成测试与竞态检测（Race Detector），由 GitHub Actions CI 在多版本 Go 环境下自动守护。整体语句覆盖率达到 **76.1%**，核心子模块覆盖率明细如下：
+本项目核心业务模块均编写了自动化单元测试、集成测试与竞态检测（Race Detector），由 GitHub Actions CI 在多版本 Go 环境下自动守护。整体语句覆盖率达到 **81.5%**，核心子模块覆盖率明细如下：
 
 | 模块 (Package) | 职责说明 | 覆盖率 (Coverage) | 质量保障重点 |
 | :--- | :--- | :---: | :--- |
 | `internal/logger` | 结构化终端排版与多通道着色日志记录器 | **100.0%** | 并发无竞态、NO_COLOR 终端无缝降级 |
 | `cmd/nasconnplus` | 命令行入口点与二进制启动器 | **100.0%** | 参数透传与入口生命周期 |
-| `internal/config` | 配置文件查找、递归解析、高危端口并集防御与边界校验 | **87.2%** | 端口边界验证、/tmp 敏感路径防提权、高危并集保护 |
-| `internal/app` | 守护进程生命周期、CLI 参数解析与主事件循环协调器 | **84.7%** | 命令行解析、状态联动、优雅信号平滑终止 |
+| `internal/scanner` | Linux 内核 procfs 端口嗅探、HTTP 探测与报表 | **91.0%** | procfs 零依赖解析、自进程 /proc/self/fd 解耦 |
+| `internal/config` | 配置文件查找、递归解析、高危端口并集防御与边界校验 | **88.3%** | 白名单模式、/tmp 敏感路径防提权、高危并集保护 |
+| `internal/app` | 守护进程生命周期、CLI 参数解析与主事件循环协调器 | **85.5%** | 命令行解析、状态联动、优雅信号平滑终止、pprof 支持 |
 | `internal/ipc` | Unix Domain Socket 客户端/服务端 IPC 通信与大盘渲染 | **84.2%** | 0600 权限隔离、优雅重试、健康状态报表 |
 | `internal/cert` | TLS 证书管理器、ECDSA 自签与 Let's Encrypt 适配 | **76.8%** | 证书热重载、指纹防重复加载、多域名命中 |
-| `internal/proxy` | L4 零拷贝 TCP Relay 中继与 L7 HTTPS 反向代理引擎 | **69.0%** | 零拷贝 splice、并发限制器、HSTS 注入、双栈平滑交接 |
-| `internal/scanner` | Linux 内核 procfs 端口嗅探、HTTP 探测与报表 | **68.9%** | procfs 零依赖解析、自进程 /proc/self/fd 解耦 |
-| **综合覆盖率 (Total)** | **全项目业务代码总覆盖** | **`76.1%`** | **持续集成 CI 自动全链路守护** |
+| `internal/proxy` | L4 零拷贝 TCP Relay 中继与 L7 HTTPS 反向代理引擎 | **69.3%** | 零拷贝 splice、并发限制器、HSTS 注入、双栈平滑交接 |
+| **综合覆盖率 (Total)** | **全项目业务代码总覆盖** | **`81.5%`** | **持续集成 CI 自动全链路守护** |
 
 ### 本地运行测试与覆盖率报告
 

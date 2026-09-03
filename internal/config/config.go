@@ -44,10 +44,11 @@ type HTTPSPort struct {
 }
 
 type RelayCfg struct {
-	Auto     bool  `json:"auto"`
-	ZeroCopy bool  `json:"zero_copy"`
-	Exclude  []int `json:"exclude"`
-	Allow    []int `json:"allow"`
+	Auto     bool   `json:"auto"`
+	Mode     string `json:"mode"` // "auto" (default) or "whitelist"
+	ZeroCopy bool   `json:"zero_copy"`
+	Exclude  []int  `json:"exclude"`
+	Allow    []int  `json:"allow"`
 }
 
 type ACMEConfig struct {
@@ -74,6 +75,7 @@ type Config struct {
 	ACME                    ACMEConfig  `json:"acme"`
 	HSTS                    HSTSConfig  `json:"hsts"`
 	HTTPSAuto               *bool       `json:"https_auto"`    // Default: true (Zero-config auto HTTP discovery & +1 upgrade)
+	HTTPSMode               string      `json:"https_mode"`    // "auto" (default) or "whitelist"
 	HTTPSOffset             int         `json:"https_offset"`  // Default: 1 (e.g. 8080 -> 8081)
 	HTTPSExclude            []int       `json:"https_exclude"` // Ports excluded from auto HTTPS upgrade
 	HTTPSAllow              []int       `json:"https_allow"`   // Optional whitelist for auto HTTPS
@@ -251,6 +253,18 @@ func LoadConfig(path string) (*Config, error) {
 		if a <= 0 || a > 65535 {
 			return nil, fmt.Errorf("invalid https allow port: %d (must be 1-65535)", a)
 		}
+	}
+
+	if cfg.Relay.Mode == "" {
+		cfg.Relay.Mode = "auto"
+	} else if cfg.Relay.Mode != "auto" && cfg.Relay.Mode != "whitelist" {
+		return nil, fmt.Errorf("invalid relay.mode %q: must be 'auto' or 'whitelist'", cfg.Relay.Mode)
+	}
+
+	if cfg.HTTPSMode == "" {
+		cfg.HTTPSMode = "auto"
+	} else if cfg.HTTPSMode != "auto" && cfg.HTTPSMode != "whitelist" {
+		return nil, fmt.Errorf("invalid https_mode %q: must be 'auto' or 'whitelist'", cfg.HTTPSMode)
 	}
 
 	return &cfg, nil
