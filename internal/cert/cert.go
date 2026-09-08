@@ -31,6 +31,7 @@ type Manager struct {
 	autoTrustErr error
 	acmeMgr      *autocert.Manager
 	cur          *tls.Certificate
+	certMap      map[string]*tls.Certificate
 	loadedAt     string
 	trustedCA    string
 }
@@ -44,6 +45,7 @@ func NewManager(cfgPath, host, selfDir string, fallback bool, acmeEnabled bool, 
 		fallback:    fallback,
 		acmeEnabled: acmeEnabled,
 		acmeDomain:  acmeDomain,
+		certMap:     make(map[string]*tls.Certificate),
 	}
 
 	if acmeEnabled && acmeDomain != "" {
@@ -72,6 +74,13 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	// SNI match
+	if hello != nil && hello.ServerName != "" && len(m.certMap) > 0 {
+		if c, ok := m.certMap[hello.ServerName]; ok && c != nil {
+			return c, nil
+		}
+	}
 
 	if m.cur != nil {
 		return m.cur, nil
@@ -166,6 +175,9 @@ func (m *Manager) Refresh() error {
 	var lastErr error
 
 	if cfgPath != "" {
+		// Also parse all entries into certMap for dynamic SNI dispatch
+		m.loadAllCertEntries(cfgPath)
+
 		certFile, keyFile, err := m.resolveCertFilesWith(cfgPath, host)
 		if err == nil {
 			fp := m.certFingerprint(certFile, keyFile)
@@ -262,6 +274,30 @@ func (m *Manager) Refresh() error {
 		lastErr = fmt.Errorf("no certificate source configured and self-signed fallback disabled")
 	}
 	return lastErr
+}
+
+func (m *Manager) loadAllCertEntries(cfgPath string) {
+	b, err := os.ReadFile(filepath.Clean(cfgPath))
+	if err != nil {
+		return
+	}
+	var entries []CertEntry
+	if err := json.Unmarshal(b, &entries); err != nil || len(entries) == 0 {
+		return
+	}
+
+	newMap := make(map[string]*tls.Certificate)
+	for _, e := range entries {
+		if e.Host != "" && e.Host != "fallback" && e.Host != "*" && e.Cert != "" && e.Key != "" {
+			if kc, err := tls.LoadX509KeyPair(e.Cert, e.Key); err == nil {
+				newMap[e.Host] = &kc
+			}
+		}
+	}
+
+	m.mu.Lock()
+	m.certMap = newMap
+	m.mu.Unlock()
 }
 
 func (m *Manager) resolveCertFilesWith(cfgPath, host string) (string, string, error) {

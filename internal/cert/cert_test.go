@@ -408,6 +408,46 @@ func TestCertManager_GetCertificate(t *testing.T) {
 	if cert == nil {
 		t.Fatal("expected non-nil cert")
 	}
+
+	// 3. Dynamic SNI multi-cert resolution
+	cfgSNI := filepath.Join(tempDir, "sni_cert.json")
+	certA, keyA := filepath.Join(tempDir, "a.crt"), filepath.Join(tempDir, "a.key")
+	certB, keyB := filepath.Join(tempDir, "b.crt"), filepath.Join(tempDir, "b.key")
+	if _, _, _, err := loadOrCreateLocalSignedCertificate(tempDir, "app-a.local"); err != nil {
+		t.Fatalf("gen a: %v", err)
+	}
+	_ = os.Rename(filepath.Join(tempDir, "selfsigned.crt"), certA)
+	_ = os.Rename(filepath.Join(tempDir, "selfsigned.key"), keyA)
+
+	if _, _, _, err := loadOrCreateLocalSignedCertificate(tempDir, "app-b.local"); err != nil {
+		t.Fatalf("gen b: %v", err)
+	}
+	_ = os.Rename(filepath.Join(tempDir, "selfsigned.crt"), certB)
+	_ = os.Rename(filepath.Join(tempDir, "selfsigned.key"), keyB)
+
+	sniEntries := []CertEntry{
+		{Host: "fallback", Cert: certA, Key: keyA},
+		{Host: "app-a.local", Cert: certA, Key: keyA},
+		{Host: "app-b.local", Cert: certB, Key: keyB},
+	}
+	bSNI, _ := json.Marshal(sniEntries)
+	_ = os.WriteFile(cfgSNI, bSNI, 0o644)
+
+	cmSNI := NewManager(cfgSNI, "app-a.local", tempDir, false, false, "", "", "")
+	if err := cmSNI.Refresh(); err != nil {
+		t.Fatalf("cmSNI refresh: %v", err)
+	}
+
+	// Test SNI dispatch to app-b
+	certAppB, err := cmSNI.GetCertificate(&tls.ClientHelloInfo{ServerName: "app-b.local"})
+	if err != nil || certAppB == nil {
+		t.Fatalf("expected app-b cert, got err=%v", err)
+	}
+	// Test SNI dispatch to unknown host -> falls back to cur
+	certFallback, err := cmSNI.GetCertificate(&tls.ClientHelloInfo{ServerName: "unknown.local"})
+	if err != nil || certFallback == nil {
+		t.Fatalf("expected fallback cert, got err=%v", err)
+	}
 }
 
 func TestCertManager_ResolveCertFiles_Errors(t *testing.T) {
