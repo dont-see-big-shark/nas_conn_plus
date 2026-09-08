@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build & Release
@@ -55,3 +58,65 @@ jobs:
           files: |
             nasconnplus-*.tar.gz
             nasconnplus-*.tar.gz.sha256
+
+  homebrew:
+    name: Update Homebrew Tap
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Resolve Release Metadata
+        id: release
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG_NAME#v}"
+          if ! [[ "${TAG_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unsupported release tag: ${TAG_NAME}" >&2
+            exit 1
+          fi
+
+          SOURCE_URL="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${TAG_NAME}.tar.gz"
+          SOURCE_SHA256="$(curl -fsSL "${SOURCE_URL}" | sha256sum | awk '{print $1}')"
+          if [[ ! "${SOURCE_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Could not calculate source archive checksum" >&2
+            exit 1
+          fi
+
+          echo "tag=${TAG_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "sha256=${SOURCE_SHA256}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout Homebrew Tap
+        uses: actions/checkout@v4
+        with:
+          repository: dont-see-big-shark/homebrew-tap
+          ref: main
+          path: homebrew-tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          persist-credentials: true
+
+      - name: Update Formula
+        working-directory: homebrew-tap
+        run: |
+          sed -E -i.bak \
+            -e 's#archive/refs/tags/v[0-9]+(\.[0-9]+)+\.tar\.gz#archive/refs/tags/${{ steps.release.outputs.tag }}.tar.gz#g' \
+            -e 's#^  sha256 "[0-9a-f]{64}"$#  sha256 "${{ steps.release.outputs.sha256 }}"#' \
+            Formula/nasconnplus.rb
+          rm -f Formula/nasconnplus.rb.bak
+
+          grep -q "archive/refs/tags/${{ steps.release.outputs.tag }}.tar.gz" Formula/nasconnplus.rb
+          grep -q 'sha256 "${{ steps.release.outputs.sha256 }}"' Formula/nasconnplus.rb
+          git diff --check
+
+      - name: Commit and Push Formula
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- Formula/nasconnplus.rb; then
+            echo "Formula already at ${{ steps.release.outputs.tag }}"
+            exit 0
+          fi
+          git add Formula/nasconnplus.rb
+          git commit -m "nasconnplus: update to ${{ steps.release.outputs.version }}"
+          git push origin main

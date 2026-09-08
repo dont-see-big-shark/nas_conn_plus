@@ -189,7 +189,7 @@ func (s *Service) tryListen(w want) (*listenerState, error) {
 	// restart, retry helps) is distinguishable from EACCES (low port without
 	// CAP_NET_BIND_SERVICE, retry won't help) and EAFNOSUPPORT.
 	if err != nil {
-		return nil, fmt.Errorf("listen %s %s: %w", w.kind, s.addrOf(w.kind, w.port), err)
+		return nil, fmt.Errorf("listen %s %s: %w", w.name, s.addrOf(w.kind, w.port), err)
 	}
 
 	maxConns := s.cfg.MaxConnsPerListener
