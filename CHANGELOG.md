@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.1] - 2026-09-08
+
+### Added
+- **Automatic trusted local HTTPS fallback**: fallback certificates are now
+  signed by a persistent ECDSA P-256 local CA instead of a self-signed leaf.
+  `nasconn+` can install this local CA automatically (`auto_trust_local_ca`,
+  default `true`) into the macOS login keychain or Linux system CA store, so
+  fallback HTTPS no longer requires a manual certificate import.
+- Configurable local certificate identity via `cert_host`; generated leaves
+  cover the configured host plus `localhost`, `127.0.0.1`, and `::1`.
+- Diagnostic reports (`-t`) now honor `https_offset`, `https_auto`,
+  `https_mode`, and `https_allow` instead of hard-coding `+1`.
+- Release automation updates the official Homebrew tap after a successful
+  tag build using a narrowly scoped deploy key.
+
+### Changed
+- The generated local CA persists for 10 years while server leaves remain
+  valid for 825 days. Leaf rotation/reload does not require changing the
+  trusted local CA.
+- Homebrew service now starts from `$(brew --prefix)/var/lib/nasconnplus`
+  so first-run config/cert storage does not try to write `/etc`.
+
+### Fixed
+- ACME configuration is rejected when `acme.enabled=true` lacks `domain`.
+- Listener bind failures identify the listener name in addition to the
+  kind/address, making conflict diagnostics actionable.
+- CI pins the `govulncheck` job to Go 1.25, avoiding stale Go 1.25.0
+  standard-library findings, and isolates scanner inode-refresh cooldown in
+  tests.
+
 ## [1.1.0] - 2026-09-03
 
 This release closes the correctness and hardening backlog from the v1.0.x

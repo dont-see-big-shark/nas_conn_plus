@@ -298,7 +298,7 @@ Query the background daemon from any terminal shell to view listener health, act
 │ relay:3000 │ Relay (L4) │ [::]:3000    │ 127.0.0.1:3000   │ ● OK   │ 0      │ 12    │ ↓ 45.00 KB / ↑ 82.30 KB │ 1h 24m │
 ╰────────────┴────────────┴──────────────┴──────────────────┴────────┴────────┴───────┴─────────────────────────┴────────╯
 
-● Daemon: v1.1.0 | Uptime: 1h 24m | Active Conns: 3 | Total Traffic: 1.67 GB | Total Errors: 0
+● Daemon: v1.1.1 | Uptime: 1h 24m | Active Conns: 3 | Total Traffic: 1.67 GB | Total Errors: 0
 ```
 
 #### 🩺 One-Shot Diagnostic Mode (`nasconnplus -t`):

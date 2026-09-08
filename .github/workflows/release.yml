@@ -48,7 +48,8 @@ jobs:
           if [ -n "${{ matrix.goarm }}" ]; then
             OUTPUT_NAME="${OUTPUT_NAME}v${{ matrix.goarm }}"
           fi
-          go build -trimpath -ldflags="-s -w -X 'github.com/dont-see-big-shark/nas_conn_plus/internal/app.Version=${TAG_NAME}' -X 'github.com/dont-see-big-shark/nas_conn_plus/internal/app.BuildDate=${BUILD_DATE}'" -o nasconnplus ./cmd/nasconnplus
+          VERSION="${TAG_NAME#v}"
+          go build -trimpath -ldflags="-s -w -X 'github.com/dont-see-big-shark/nas_conn_plus/internal/app.Version=${VERSION}' -X 'github.com/dont-see-big-shark/nas_conn_plus/internal/app.BuildDate=${BUILD_DATE}'" -o nasconnplus ./cmd/nasconnplus
           tar -czvf "${OUTPUT_NAME}.tar.gz" nasconnplus config.example.json deploy/nasconnplus.service
           sha256sum "${OUTPUT_NAME}.tar.gz" > "${OUTPUT_NAME}.tar.gz.sha256"
 

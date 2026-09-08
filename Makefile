@@ -1,5 +1,5 @@
 BINARY_NAME := nasconnplus
-VERSION ?= 1.1.0
+VERSION ?= 1.1.1
 BUILD_DATE := $(shell date -u +'%Y-%m-%d')
 LDFLAGS := -s -w -X 'github.com/dont-see-big-shark/nas_conn_plus/internal/app.Version=$(VERSION)' -X 'github.com/dont-see-big-shark/nas_conn_plus/internal/app.BuildDate=$(BUILD_DATE)'
 

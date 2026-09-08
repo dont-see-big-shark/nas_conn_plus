@@ -23,8 +23,8 @@ import (
 )
 
 var (
-	Version   = "1.1.0"
-	BuildDate = "2026-09-03"
+	Version   = "1.1.1"
+	BuildDate = "2026-09-08"
 )
 
 func Run() {
