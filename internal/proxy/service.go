@@ -88,6 +88,15 @@ func NewService(cfg *config.Config, log *logger.Logger, certs *cert.Manager) *Se
 		warnedConflict: make(map[string]time.Time),
 	}
 
+	respHeaderTimeout := 300 * time.Second
+	if cfg != nil {
+		if cfg.ResponseHeaderTimeoutSeconds > 0 {
+			respHeaderTimeout = time.Duration(cfg.ResponseHeaderTimeoutSeconds) * time.Second
+		} else if cfg.ResponseHeaderTimeoutSeconds < 0 {
+			respHeaderTimeout = 0
+		}
+	}
+
 	// High performance connection pooling: tuned for NAS low-memory devices
 	// MaxIdleConns reduced from 1024 to 256 to avoid fd exhaustion on 512M NAS
 	s.transport = &http.Transport{
@@ -102,7 +111,7 @@ func NewService(cfg *config.Config, log *logger.Logger, certs *cert.Manager) *Se
 		MaxConnsPerHost:        32,
 		IdleConnTimeout:        90 * time.Second,
 		TLSHandshakeTimeout:    5 * time.Second,
-		ResponseHeaderTimeout:  15 * time.Second,
+		ResponseHeaderTimeout:  respHeaderTimeout,
 		ExpectContinueTimeout:  1 * time.Second,
 		// P1: 8K broke SSO-heavy backends (large Set-Cookie chains, e.g. DSM).
 		// 32K still bounds abuse at ~300x below Go's 10M default.
@@ -400,6 +409,13 @@ func (s *Service) startHTTPServer(st *listenerState, w want) {
 		Transport:  s.transport,
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(targetURL)
+			// Automatic path normalization for OpenAI-compatible LLM endpoints:
+			// Allows clients requesting /chat/completions or /models to work without /v1 prefix.
+			if pr.Out.URL.Path == "/chat/completions" {
+				pr.Out.URL.Path = "/v1/chat/completions"
+			} else if pr.Out.URL.Path == "/models" {
+				pr.Out.URL.Path = "/v1/models"
+			}
 			pr.Out.Host = pr.In.Host
 			pr.SetXForwarded()
 			pr.Out.Header.Set("X-Forwarded-Proto", "https")

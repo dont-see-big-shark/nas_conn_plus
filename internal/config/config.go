@@ -92,8 +92,9 @@ type Config struct {
 	HTTPS                   []HTTPSPort `json:"https"`         // Explicit custom rules (optional overrides)
 	Relay                   RelayCfg    `json:"relay"`
 	MaxConnsPerListener     int         `json:"max_conns_per_listener"`
-	SocketPath              string      `json:"socket_path"`
-	OverrideDefaultExcludes bool        `json:"override_default_excludes"`
+	SocketPath                   string      `json:"socket_path"`
+	OverrideDefaultExcludes      bool        `json:"override_default_excludes"`
+	ResponseHeaderTimeoutSeconds int         `json:"response_header_timeout_seconds"` // Default: 300 (seconds)
 
 	relayExcludeSet map[int]struct{} `json:"-"`
 	httpsExcludeSet map[int]struct{} `json:"-"`
