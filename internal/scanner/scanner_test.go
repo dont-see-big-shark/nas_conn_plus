@@ -411,6 +411,9 @@ NOT_LISTEN 0  128          0.0.0.0:3306       0.0.0.0:*
 
 func TestScanProcFSWith_MockFixtures(t *testing.T) {
 	tempDir := t.TempDir()
+	originalCooldown := inodeRefreshCooldown
+	inodeRefreshCooldown = 0
+	t.Cleanup(func() { inodeRefreshCooldown = originalCooldown })
 
 	// 1. Create procRoot/net/tcp and procRoot/net/tcp6
 	netDir := filepath.Join(tempDir, "net")
