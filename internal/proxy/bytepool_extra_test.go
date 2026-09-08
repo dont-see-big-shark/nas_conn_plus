@@ -4,8 +4,8 @@ import "testing"
 
 func BenchmarkBytePoolGetPut(b *testing.B) {
 	p := newBytePool()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		buf := p.Get()
 		p.Put(buf)
 	}

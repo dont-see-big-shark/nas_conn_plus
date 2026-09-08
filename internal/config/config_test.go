@@ -279,6 +279,12 @@ func TestLoadConfig_AllowAndHSTS(t *testing.T) {
 	if _, err := LoadConfig(invalidHTTPSMode); err == nil {
 		t.Error("expected error for invalid https_mode")
 	}
+
+	invalidACME := filepath.Join(tempDir, "invalid_acme.json")
+	_ = os.WriteFile(invalidACME, []byte(`{"acme": {"enabled": true}}`), 0o600)
+	if _, err := LoadConfig(invalidACME); err == nil {
+		t.Error("expected error for enabled ACME without domain")
+	}
 }
 
 func TestLoadConfig_ZeroCopyDefaults(t *testing.T) {
@@ -317,5 +323,3 @@ func TestLoadConfig_ZeroCopyDefaults(t *testing.T) {
 		t.Errorf("expected explicit true to be true")
 	}
 }
-
-

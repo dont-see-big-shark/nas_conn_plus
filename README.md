@@ -253,7 +253,7 @@ Valid JSON only — this project uses `_comment` keys for annotations because st
 | `idle_seconds` | Integer | `900` | 60–86400 | Idle timeout for HTTP keep-alive connections |
 | `hsts` | Object | Disabled | — | `{"enabled": true, "max_age": 31536000, "include_subdomains": false}`. RFC 6797 compliant: never injected for IP literals or self-signed certificates |
 | `socket_path` | String | Auto | no `..` | Unix Domain Socket path. Auto: `$XDG_RUNTIME_DIR/nasconnplus.sock`, else `/run/nasconnplus.sock` (root), else per-UID isolated dir |
-| `acme` | Object | Disabled | — | `{"enabled": true, "domain": "nas.example.com", "email": "admin@example.com"}`. TLS-ALPN-01 only: port 443 must reach the target listener |
+| `acme` | Object | Disabled | `enabled` requires `domain` | `{"enabled": true, "domain": "nas.example.com", "email": "admin@example.com"}`. TLS-ALPN-01 only: port 443 must reach the target listener |
 | `cert_config_path` | String | `""` | no `..` | External JSON file with custom TLS certificate pairs (content-hash reloaded) |
 | `selfsigned_dir` | String | `/etc/nasconnplus/tls` | no `..` | Storage for the generated self-signed certificate |
 

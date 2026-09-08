@@ -112,6 +112,7 @@ func Run() {
 			return
 		}
 
+		diagnosticOpts := scanner.DiagnosticOptions{HTTPSAuto: true, HTTPSOffset: 1}
 		var excludes []int
 		resolvedPath := config.ResolveConfigPath(*configPathFlag)
 		// Pure read: diagnostics must reflect the file, never create one.
@@ -129,9 +130,14 @@ func Run() {
 					excludes = append(excludes, p)
 				}
 			}
+			diagnosticOpts.HTTPSOffset = cfg.HTTPSOffset
+			diagnosticOpts.HTTPSAuto = cfg.HTTPSAuto != nil && *cfg.HTTPSAuto
+			diagnosticOpts.HTTPSMode = cfg.HTTPSMode
+			diagnosticOpts.HTTPSAllow = cfg.HTTPSAllow
 		}
 
-		fmt.Println("\n" + res.DiagnosticReport(excludes))
+		diagnosticOpts.ExcludedPorts = excludes
+		fmt.Println("\n" + res.DiagnosticReport(diagnosticOpts))
 		return
 	}
 
@@ -168,7 +174,10 @@ func Run() {
 	if err := cm.Refresh(); err != nil {
 		log.Warn("Certificate initialization: %v", err)
 	} else {
-		if cfg.ACME.Enabled {
+		if initErr := cm.ACMEInitError(); initErr != nil {
+			log.Warn("ACME unavailable: %v", initErr)
+		}
+		if cm.ACMEReady() {
 			log.Info("TLS certificate ready (ACME enabled for %s)", cfg.ACME.Domain)
 		} else {
 			log.Info("TLS certificate loaded successfully (Host: %s)", cfg.CertHost)

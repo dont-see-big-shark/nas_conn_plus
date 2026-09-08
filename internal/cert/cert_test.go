@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -130,6 +131,28 @@ func TestCertManager_ACMEFailureSurfacesWithoutCert(t *testing.T) {
 	}
 	if cm2.Current() == nil {
 		t.Error("expected fallback certificate to be loaded")
+	}
+}
+
+func TestCertManager_ACMECacheInitErrorSurfaces(t *testing.T) {
+	tempDir := t.TempDir()
+	blocker := filepath.Join(tempDir, "cache-parent")
+	if err := os.WriteFile(blocker, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write blocker: %v", err)
+	}
+
+	cm := NewManager("", "nas.home.local", t.TempDir(), false, true,
+		"example.com", "", filepath.Join(blocker, "acme"))
+	if err := cm.Refresh(); err == nil {
+		t.Fatal("expected Refresh to surface ACME cache initialization failure")
+	} else if !strings.Contains(err.Error(), "initialize ACME cache") {
+		t.Fatalf("expected ACME cache error, got %v", err)
+	}
+	if cm.ACMEReady() {
+		t.Error("expected ACME to be unavailable after cache initialization failure")
+	}
+	if err := cm.ACMEInitError(); err == nil || !strings.Contains(err.Error(), "initialize ACME cache") {
+		t.Fatalf("expected persisted ACME initialization error, got %v", err)
 	}
 }
 

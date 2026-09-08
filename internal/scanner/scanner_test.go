@@ -20,7 +20,7 @@ func TestDiagnosticReport(t *testing.T) {
 		Names:    map[int]string{8080: "web", 22: "sshd"},
 	}
 
-	report := res.DiagnosticReport([]int{53})
+	report := res.DiagnosticReport(DiagnosticOptions{ExcludedPorts: []int{53}, HTTPSAuto: true})
 	if !strings.Contains(report, "8080") {
 		t.Errorf("expected report to contain port 8080, got:\n%s", report)
 	}
@@ -230,7 +230,7 @@ func TestDiagnosticReport_Excluded(t *testing.T) {
 	}
 
 	// Exclude port 22
-	report := res.DiagnosticReport([]int{22})
+	report := res.DiagnosticReport(DiagnosticOptions{ExcludedPorts: []int{22}, HTTPSAuto: true})
 	if !strings.Contains(report, "Excluded") {
 		t.Errorf("expected report to indicate port 22 is Excluded, got:\n%s", report)
 	}
@@ -299,7 +299,7 @@ func TestParseProcNetFile_EdgeCasesAndErrors(t *testing.T) {
 func TestDiagnosticReport_Branches(t *testing.T) {
 	// Empty result
 	emptyRes := newResult()
-	if !strings.Contains(emptyRes.DiagnosticReport(nil), "No listening TCP") {
+	if !strings.Contains(emptyRes.DiagnosticReport(DiagnosticOptions{}), "No listening TCP") {
 		t.Errorf("expected empty message for 0 ports")
 	}
 
@@ -312,7 +312,7 @@ func TestDiagnosticReport_Branches(t *testing.T) {
 		Names:    map[int]string{80: "httpd"},
 	}
 
-	rep := res.DiagnosticReport([]int{80})
+	rep := res.DiagnosticReport(DiagnosticOptions{ExcludedPorts: []int{80}, HTTPSAuto: true})
 	if !strings.Contains(rep, "IPv6-Only") {
 		t.Errorf("expected report to contain IPv6-Only")
 	}
@@ -321,6 +321,41 @@ func TestDiagnosticReport_Branches(t *testing.T) {
 	}
 	if !strings.Contains(rep, "Excluded") {
 		t.Errorf("expected report to contain Excluded")
+	}
+}
+
+func TestDiagnosticReport_HTTPSOptions(t *testing.T) {
+	res := &Result{
+		V4Wild: map[int]bool{8080: true, 65535: true},
+		PIDs:   map[int]int{8080: 1, 65535: 1},
+		Names:  map[int]string{8080: "app", 65535: "edge"},
+	}
+	for _, p := range []int{8080, 65535} {
+		probeCache[p] = probeEntry{isHTTP: true, updatedAt: time.Now()}
+	}
+	t.Cleanup(func() {
+		delete(probeCache, 8080)
+		delete(probeCache, 65535)
+	})
+
+	offsetReport := res.DiagnosticReport(DiagnosticOptions{HTTPSAuto: true, HTTPSOffset: 3})
+	if !strings.Contains(offsetReport, "8083") {
+		t.Fatalf("expected diagnostic to honor https_offset 3, got:\n%s", offsetReport)
+	}
+	if !strings.Contains(offsetReport, "> 65535") {
+		t.Fatalf("expected diagnostic to detect target above 65535, got:\n%s", offsetReport)
+	}
+
+	allowReport := res.DiagnosticReport(DiagnosticOptions{
+		HTTPSAuto:  true,
+		HTTPSMode:  "whitelist",
+		HTTPSAllow: []int{8080},
+	})
+	if !strings.Contains(allowReport, "8081") || !strings.Contains(allowReport, "Excluded") {
+		t.Fatalf("expected whitelist diagnostic to exclude denied backends, got:\n%s", allowReport)
+	}
+	if strings.Contains(allowReport, "65536") {
+		t.Fatalf("expected 65535 not to upgrade to 65536 in whitelist mode, got:\n%s", allowReport)
 	}
 }
 
@@ -444,6 +479,3 @@ func TestScanWithSS(t *testing.T) {
 	// On Linux with iproute2 it executes ss; on macOS/minimal systems it returns exec error.
 	_, _ = scanWithSS()
 }
-
-
-

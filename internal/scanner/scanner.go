@@ -464,9 +464,40 @@ func scanWithLsof() (*Result, error) {
 	return res, nil
 }
 
-func (r *Result) DiagnosticReport(excludedPorts []int) string {
+type DiagnosticOptions struct {
+	ExcludedPorts []int
+	HTTPSAuto     bool
+	HTTPSOffset   int
+	HTTPSMode     string
+	HTTPSAllow    []int
+}
+
+func httpsAutoAllowed(backend int, opts DiagnosticOptions) bool {
+	if opts.HTTPSMode == "whitelist" {
+		if len(opts.HTTPSAllow) == 0 {
+			return false
+		}
+		for _, p := range opts.HTTPSAllow {
+			if p == backend {
+				return true
+			}
+		}
+		return false
+	}
+	if len(opts.HTTPSAllow) == 0 {
+		return true
+	}
+	for _, p := range opts.HTTPSAllow {
+		if p == backend {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Result) DiagnosticReport(opts DiagnosticOptions) string {
 	excludeMap := make(map[int]bool)
-	for _, p := range excludedPorts {
+	for _, p := range opts.ExcludedPorts {
 		excludeMap[p] = true
 	}
 
@@ -522,10 +553,22 @@ func (r *Result) DiagnosticReport(excludedPorts []int) string {
 		if excludeMap[p] {
 			httpsPred = tui.ExcludedBadge()
 		} else if v4 || v6 {
-			if httpPred[p] {
-				httpsPred = tui.HTTPSReady(p)
-			} else {
+			if !httpPred[p] {
 				httpsPred = tui.NoHTTP()
+			} else if !opts.HTTPSAuto {
+				httpsPred = tui.HTTPSAutoDisabled()
+			} else if httpsAutoAllowed(p, opts) {
+				target := p + opts.HTTPSOffset
+				if opts.HTTPSOffset <= 0 {
+					target = p + 1
+				}
+				if target > 65535 {
+					httpsPred = tui.HTTPSRange()
+				} else {
+					httpsPred = tui.HTTPSReadyAt(target)
+				}
+			} else {
+				httpsPred = tui.ExcludedBadge()
 			}
 		}
 
@@ -540,9 +583,12 @@ func (r *Result) DiagnosticReport(excludedPorts []int) string {
 		})
 	}
 
-	return renderDiagnosticTable(rows)
+	return renderDiagnosticTable(rows, opts.HTTPSOffset)
 }
 
-func renderDiagnosticTable(rows [][]string) string {
-	return tui.RenderTable([]string{"PORT", "IPv4 (0.0.0.0)", "IPv6 ([::])", "PID", "PROCESS", "RELAY ACTION", "HTTPS (+1)"}, rows)
+func renderDiagnosticTable(rows [][]string, httpsOffset int) string {
+	return tui.RenderTable([]string{
+		"PORT", "IPv4 (0.0.0.0)", "IPv6 ([::])", "PID", "PROCESS", "RELAY ACTION",
+		fmt.Sprintf("HTTPS (+%d)", max(1, httpsOffset)),
+	}, rows)
 }

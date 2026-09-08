@@ -460,6 +460,9 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("invalid https allow port: %d (must be 1-65535)", a)
 		}
 	}
+	if cfg.ACME.Enabled && cfg.ACME.Domain == "" {
+		return nil, fmt.Errorf("invalid acme config: enabled requires domain")
+	}
 
 	// P1: daemon runs as root and creates/removes files at these locations
 	// (socket, cert dirs). Reject ".." to prevent accidental or planted

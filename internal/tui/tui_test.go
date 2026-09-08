@@ -6,7 +6,10 @@ import (
 )
 
 func TestBadges(t *testing.T) {
-	for _, s := range []string{RelayBadge(), DualStackBadge(), ExcludedBadge(), V6OnlyBadge(), Yes(), No(), NoHTTP(), HTTPSReady(8080)} {
+	for _, s := range []string{
+		RelayBadge(), DualStackBadge(), ExcludedBadge(), V6OnlyBadge(), Yes(), No(), NoHTTP(),
+		HTTPSAutoDisabled(), HTTPSRange(), HTTPSReady(8080),
+	} {
 		if s == "" {
 			t.Fatal("empty badge")
 		}

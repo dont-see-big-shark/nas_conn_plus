@@ -16,7 +16,7 @@ func TestFormatBytesNoPanic(t *testing.T) {
 }
 
 func BenchmarkFormatBytes(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = formatBytes(123456789)
 	}
 }

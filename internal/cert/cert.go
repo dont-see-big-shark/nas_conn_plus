@@ -35,6 +35,7 @@ type Manager struct {
 	fallback    bool
 	acmeEnabled bool
 	acmeDomain  string
+	acmeInitErr error
 	acmeMgr     *autocert.Manager
 	cur         *tls.Certificate
 	loadedAt    string
@@ -59,6 +60,8 @@ func NewManager(cfgPath, host, selfDir string, fallback bool, acmeEnabled bool, 
 				Cache:      autocert.DirCache(acmeCacheDir),
 				Email:      acmeEmail,
 			}
+		} else {
+			m.acmeInitErr = fmt.Errorf("initialize ACME cache %s: %w", acmeCacheDir, err)
 		}
 	}
 
@@ -88,6 +91,22 @@ func (m *Manager) Current() *tls.Certificate {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.cur
+}
+
+// ACMEReady reports whether the configured ACME client can issue a certificate
+// during a TLS handshake. Readiness does not imply issuance has completed.
+func (m *Manager) ACMEReady() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.acmeEnabled && m.acmeMgr != nil
+}
+
+// ACMEInitError returns a non-nil error when ACME was enabled but could not be
+// initialized, for example because its persistent cache directory was unusable.
+func (m *Manager) ACMEInitError() error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.acmeInitErr
 }
 
 func (m *Manager) certFingerprint(certFile, keyFile string) string {
@@ -188,6 +207,12 @@ func (m *Manager) Refresh() error {
 		m.mu.RUnlock()
 		if hasCurForACME {
 			return nil
+		}
+	} else if acmeEnabled && acmeMgr == nil {
+		if initErr := m.ACMEInitError(); initErr != nil {
+			lastErr = initErr
+		} else {
+			lastErr = fmt.Errorf("ACME is enabled but no domain is configured")
 		}
 	}
 

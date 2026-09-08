@@ -253,7 +253,7 @@ go install github.com/dont-see-big-shark/nas_conn_plus/cmd/nasconnplus@latest
 | `idle_seconds` | 整数 | `900` | 60–86400 | HTTP 保活连接空闲超时（秒） |
 | `hsts` | 对象 | 禁用 | — | `{"enabled": true, "max_age": 31536000, "include_subdomains": false}`（RFC 6797 合规：IP 地址与自签证书自动抑制） |
 | `socket_path` | 字符串 | 自动 | 禁止 `..` | 自定义 Unix Domain Socket 路径（默认 `$XDG_RUNTIME_DIR/nasconnplus.sock`，root 回退 `/run/nasconnplus.sock`，否则按 UID 隔离目录） |
-| `acme` | 对象 | 禁用 | — | `{"enabled": true, "domain": "nas.xxx.com", "email": "admin@xxx.com"}`（仅 TLS-ALPN-01：443 端口必须能到达目标监听器） |
+| `acme` | 对象 | 禁用 | `enabled` 时必须填 `domain` | `{"enabled": true, "domain": "nas.xxx.com", "email": "admin@xxx.com"}`（仅 TLS-ALPN-01：443 端口必须能到达目标监听器） |
 | `cert_config_path` | 字符串 | `""` | 禁止 `..` | 外部现有 TLS 证书清单文件路径（内容哈希动态重载） |
 | `selfsigned_dir` | 字符串 | `/etc/nasconnplus/tls` | 禁止 `..` | 自签证书存储目录 |
 
