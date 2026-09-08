@@ -79,6 +79,7 @@ type Config struct {
 	CertConfigPath          string      `json:"cert_config_path"`
 	CertHost                string      `json:"cert_host"`
 	FallbackSelf            *bool       `json:"fallback_selfsigned"`
+	AutoTrustLocalCA        *bool       `json:"auto_trust_local_ca"`
 	SelfDir                 string      `json:"selfsigned_dir"`
 	IdleSeconds             int         `json:"idle_seconds"`
 	ACME                    ACMEConfig  `json:"acme"`
@@ -380,6 +381,10 @@ func LoadConfig(path string) (*Config, error) {
 	if cfg.FallbackSelf == nil {
 		trueVal := true
 		cfg.FallbackSelf = &trueVal
+	}
+	if cfg.AutoTrustLocalCA == nil {
+		trueVal := true
+		cfg.AutoTrustLocalCA = &trueVal
 	}
 	if cfg.HTTPSAuto == nil {
 		trueVal := true

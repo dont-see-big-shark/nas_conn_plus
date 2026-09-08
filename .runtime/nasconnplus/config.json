@@ -1,0 +1,11 @@
+{
+  "_comment": "relay.exclude / https_exclude omitted => built-in 19-port deny list applies; set override_default_excludes:true to replace it entirely",
+  "cert_host": "nas.local",
+  "relay": {
+    "auto": true,
+    "zero_copy": true,
+    "exclude": [22,23,53,111,135,137,138,139,445,2049,2375,2376,3306,3389,5432,6379,9200,11211,27017]
+  },
+  "https_auto": true,
+  "https_exclude": [22,23,53,111,135,137,138,139,445,2049,2375,2376,3306,3389,5432,6379,9200,11211,27017]
+}

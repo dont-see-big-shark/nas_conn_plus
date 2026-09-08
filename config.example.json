@@ -1,7 +1,8 @@
 {
   "_comment": "nasconn+ 核心配置范例（开箱即用，内置 19 个高危端口自动防护）",
-  "_comment_cert": "自签名证书绑定的主机名/域名（默认自动生成并在内存中热重载 ECDSA 证书）",
+  "_comment_cert": "本地证书绑定的主机名/域名（默认生成本地 CA 签发证书，并自动注册系统信任）",
   "cert_host": "nas.local",
+  "auto_trust_local_ca": true,
   "_comment_relay": "自动将仅监听 IPv4 (0.0.0.0) 的端口镜像至 IPv6 ([::])。默认开启内核 splice(2) 零拷贝（流量字节统计恒为 0，连接数/错误数正常；要看流量需显式设为 false）",
   "relay": {
     "auto": true,

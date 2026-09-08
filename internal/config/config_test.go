@@ -81,6 +81,9 @@ func TestLoadConfig_MinimalStreamlined(t *testing.T) {
 	if cfg.FallbackSelf == nil || !*cfg.FallbackSelf {
 		t.Errorf("expected default FallbackSelf=true")
 	}
+	if cfg.AutoTrustLocalCA == nil || !*cfg.AutoTrustLocalCA {
+		t.Errorf("expected default AutoTrustLocalCA=true")
+	}
 	if cfg.SelfDir != "/etc/nasconnplus/tls" {
 		t.Errorf("expected default SelfDir='/etc/nasconnplus/tls', got %s", cfg.SelfDir)
 	}

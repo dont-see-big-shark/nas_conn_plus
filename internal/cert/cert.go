@@ -1,22 +1,13 @@
 package cert
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
-	"math/big"
-	"net"
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"golang.org/x/crypto/acme/autocert"
 )
@@ -28,17 +19,20 @@ type CertEntry struct {
 }
 
 type Manager struct {
-	mu          sync.RWMutex
-	cfgPath     string
-	host        string
-	selfDir     string
-	fallback    bool
-	acmeEnabled bool
-	acmeDomain  string
-	acmeInitErr error
-	acmeMgr     *autocert.Manager
-	cur         *tls.Certificate
-	loadedAt    string
+	mu           sync.RWMutex
+	cfgPath      string
+	host         string
+	selfDir      string
+	fallback     bool
+	autoTrust    bool
+	acmeEnabled  bool
+	acmeDomain   string
+	acmeInitErr  error
+	autoTrustErr error
+	acmeMgr      *autocert.Manager
+	cur          *tls.Certificate
+	loadedAt     string
+	trustedCA    string
 }
 
 // NewManager creates a new TLS certificate manager with optional ACME support
@@ -109,6 +103,37 @@ func (m *Manager) ACMEInitError() error {
 	return m.acmeInitErr
 }
 
+// SetAutoTrust controls whether the generated fallback leaf is signed by a
+// persistent local CA and that CA is installed in the OS trust store.
+func (m *Manager) SetAutoTrust(enabled bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.autoTrust = enabled
+}
+
+// AutoTrustEnabled reports whether automatic local CA installation is active.
+func (m *Manager) AutoTrustEnabled() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.autoTrust
+}
+
+// LocalCATrusted reports whether the current generated local CA is known to be
+// trusted by this process. It is best-effort runtime state, not a full system
+// certificate store scan.
+func (m *Manager) LocalCATrusted() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.trustedCA != ""
+}
+
+// LocalCATrustError returns the most recent automatic CA trust setup error.
+func (m *Manager) LocalCATrustError() error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.autoTrustErr
+}
+
 func (m *Manager) certFingerprint(certFile, keyFile string) string {
 	cStat, err1 := os.Stat(certFile)
 	kStat, err2 := os.Stat(keyFile)
@@ -132,6 +157,7 @@ func (m *Manager) Refresh() error {
 	host := m.host
 	selfDir := m.selfDir
 	fallback := m.fallback
+	autoTrust := m.autoTrust
 	acmeEnabled := m.acmeEnabled
 	acmeMgr := m.acmeMgr
 	loadedAtSnap := m.loadedAt
@@ -164,7 +190,7 @@ func (m *Manager) Refresh() error {
 	}
 
 	if fallback {
-		sc, newDir, err := m.loadOrCreateSelfSignedWith(selfDir, host)
+		sc, newDir, caPath, err := loadOrCreateLocalSignedCertificate(selfDir, host)
 		if err == nil && sc != nil {
 			// P0-2 FIX: fingerprint the actual on-disk files, not just the
 			// host name. A static "self:"+host never changes, so an external
@@ -190,8 +216,17 @@ func (m *Manager) Refresh() error {
 			}
 			shouldReturn := !acmeEnabled
 			m.mu.Unlock()
+			if autoTrust {
+				trustErr := m.ensureLocalCATrusted(caPath)
+				m.mu.Lock()
+				m.autoTrustErr = trustErr
+				m.mu.Unlock()
+				if trustErr != nil {
+					lastErr = trustErr
+				}
+			}
 			if shouldReturn {
-				return nil
+				return lastErr
 			}
 		} else if err != nil {
 			lastErr = fmt.Errorf("generate self-signed: %w", err)
@@ -249,112 +284,4 @@ func (m *Manager) resolveCertFilesWith(cfgPath, host string) (string, string, er
 	}
 
 	return "", "", fmt.Errorf("invalid cert config format in %s", cfgPath)
-}
-
-func (m *Manager) loadOrCreateSelfSignedWith(selfDir, host string) (*tls.Certificate, string, error) {
-	crtPath := filepath.Join(selfDir, "selfsigned.crt")
-	keyPath := filepath.Join(selfDir, "selfsigned.key")
-
-	if kc, err := tls.LoadX509KeyPair(crtPath, keyPath); err == nil {
-		return &kc, "", nil
-	}
-
-	actualDir := selfDir
-	if err := os.MkdirAll(selfDir, 0o700); err != nil {
-		localDir := "./tls"
-		if err2 := os.MkdirAll(localDir, 0o700); err2 == nil {
-			actualDir = localDir
-			crtPath = filepath.Join(actualDir, "selfsigned.crt")
-			keyPath = filepath.Join(actualDir, "selfsigned.key")
-			if kc, err := tls.LoadX509KeyPair(crtPath, keyPath); err == nil {
-				return &kc, actualDir, nil
-			}
-		} else {
-			return nil, "", fmt.Errorf("mkdir %s: %w", selfDir, err)
-		}
-	} else {
-		if kc, err := tls.LoadX509KeyPair(crtPath, keyPath); err == nil {
-			return &kc, "", nil
-		}
-	}
-
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, "", fmt.Errorf("generate ECDSA key: %w", err)
-	}
-
-	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
-	if err != nil {
-		serialNumber = big.NewInt(time.Now().UnixNano())
-	}
-
-	var ips []net.IP
-	if ip := net.ParseIP(host); ip != nil {
-		ips = append(ips, ip)
-	}
-	ips = append(ips, net.ParseIP("127.0.0.1"), net.ParseIP("::1"))
-
-	dnsNames := []string{"localhost"}
-	if net.ParseIP(host) == nil && host != "" {
-		dnsNames = append(dnsNames, host)
-	}
-
-	tmpl := x509.Certificate{
-		SerialNumber:          serialNumber,
-		Subject:               pkix.Name{CommonName: host, Organization: []string{"nasconn+ self-signed"}},
-		NotBefore:             time.Now().Add(-1 * time.Hour),
-		NotAfter:              time.Now().Add(825 * 24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-		IsCA:                  false,
-		DNSNames:              dnsNames,
-		IPAddresses:           ips,
-	}
-
-	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
-	if err != nil {
-		return nil, "", fmt.Errorf("create certificate: %w", err)
-	}
-
-	// #nosec G304 - crtPath is within isolated selfDir
-	crtOut, err := os.OpenFile(crtPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return nil, "", err
-	}
-	if err := pem.Encode(crtOut, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
-		_ = crtOut.Close()
-		return nil, "", fmt.Errorf("encode certificate: %w", err)
-	}
-	if err := crtOut.Close(); err != nil {
-		return nil, "", err
-	}
-
-	kb, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return nil, "", err
-	}
-
-	// #nosec G304 - keyPath is within isolated selfDir
-	keyOut, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return nil, "", err
-	}
-	if err := pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: kb}); err != nil {
-		_ = keyOut.Close()
-		return nil, "", fmt.Errorf("encode private key: %w", err)
-	}
-	if err := keyOut.Close(); err != nil {
-		return nil, "", err
-	}
-
-	kc, err := tls.LoadX509KeyPair(crtPath, keyPath)
-	if err != nil {
-		return nil, "", err
-	}
-	if actualDir != selfDir {
-		return &kc, actualDir, nil
-	}
-	return &kc, "", nil
 }

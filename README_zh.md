@@ -85,7 +85,7 @@
 - 🔐 **三级智能证书管理**：
   1. Let's Encrypt 自动申请（`autocert`，TLS-ALPN-01——需要 443 端口能到达目标监听器）。
   2. 自定义外部 PEM 证书动态重载（SHA-256 内容指纹，就地续签无需重启）。
-  3. 内置 **ECDSA P-256** 825 天自签证书保底（磁盘轮换同样会被重载）。
+  3. 内置 **ECDSA P-256** 保底证书：10 年本地 CA + 825 天服务证书（可按配置自动写入系统信任库；服务证书轮换无需重启）。
 - 🎨 **现代极客终端体验**：由 `charmbracelet/lipgloss` 驱动的精美终端排版与 ASCII Logo，内置 `-t` 单次诊断模式，生成带圆角边框与状态 Badge 的网络报表，且诊断结论与实际加载的配置一致。
 - 🛡️ **冲突自适应与优雅退出**：端口被临时占用时自动退避重试，支持 SIGINT / SIGTERM 优雅释放所有 Listener。Unix Socket `0600` 权限、状态渲染过滤注入字符、debug 端口仅限回环、HSTS 严格遵循 RFC 6797。
 
@@ -255,7 +255,8 @@ go install github.com/dont-see-big-shark/nas_conn_plus/cmd/nasconnplus@latest
 | `socket_path` | 字符串 | 自动 | 禁止 `..` | 自定义 Unix Domain Socket 路径（默认 `$XDG_RUNTIME_DIR/nasconnplus.sock`，root 回退 `/run/nasconnplus.sock`，否则按 UID 隔离目录） |
 | `acme` | 对象 | 禁用 | `enabled` 时必须填 `domain` | `{"enabled": true, "domain": "nas.xxx.com", "email": "admin@xxx.com"}`（仅 TLS-ALPN-01：443 端口必须能到达目标监听器） |
 | `cert_config_path` | 字符串 | `""` | 禁止 `..` | 外部现有 TLS 证书清单文件路径（内容哈希动态重载） |
-| `selfsigned_dir` | 字符串 | `/etc/nasconnplus/tls` | 禁止 `..` | 自签证书存储目录 |
+| `auto_trust_local_ca` | 布尔 | `true` | — | 自动把生成的本地 CA 写入 macOS 登录钥匙串或 Linux 系统 CA 库，兜底 HTTPS 无需手动导入。测试/沙箱环境可设为 `false` |
+| `selfsigned_dir` | 字符串 | `/etc/nasconnplus/tls` | 禁止 `..` | 本地 CA 与兜底证书存储目录 |
 
 ---
 

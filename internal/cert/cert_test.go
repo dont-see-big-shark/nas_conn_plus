@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -18,41 +19,91 @@ import (
 )
 
 func generateTestCert(t *testing.T, host string, serial int64, certPath, keyPath string) {
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate CA key: %v", err)
+	}
+	caTmpl := x509.Certificate{
+		SerialNumber:          big.NewInt(serial),
+		Subject:               pkix.Name{CommonName: "nasconn+ test CA"},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, &caTmpl, &caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create CA cert: %v", err)
+	}
+	caCert, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatalf("parse CA cert: %v", err)
+	}
+
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-
 	tmpl := x509.Certificate{
-		SerialNumber: big.NewInt(serial),
-		Subject:      pkix.Name{CommonName: host},
-		NotBefore:    time.Now().Add(-1 * time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-		DNSNames:     []string{host},
+		SerialNumber:          big.NewInt(serial),
+		Subject:               pkix.Name{CommonName: host},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		DNSNames:              []string{host},
+		BasicConstraintsValid: true,
+		IsCA:                  false,
 	}
-
-	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, caCert, &key.PublicKey, caKey)
 	if err != nil {
 		t.Fatalf("create cert: %v", err)
 	}
-
-	crtOut, err := os.Create(certPath)
-	if err != nil {
-		t.Fatalf("create cert file: %v", err)
-	}
-	_ = pem.Encode(crtOut, &pem.Block{Type: "CERTIFICATE", Bytes: der})
-	crtOut.Close()
+	writeTestPEM(t, certPath, "CERTIFICATE", der)
 
 	kb, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
 		t.Fatalf("marshal key: %v", err)
 	}
-	keyOut, err := os.Create(keyPath)
+	writeTestPEM(t, keyPath, "EC PRIVATE KEY", kb)
+}
+
+func writeTestPEM(t *testing.T, path, blockType string, der []byte) {
+	t.Helper()
+	out, err := os.Create(path)
 	if err != nil {
-		t.Fatalf("create key file: %v", err)
+		t.Fatalf("create %s: %v", path, err)
 	}
-	_ = pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: kb})
-	keyOut.Close()
+	defer out.Close()
+	if err := pem.Encode(out, &pem.Block{Type: blockType, Bytes: der}); err != nil {
+		t.Fatalf("encode %s: %v", path, err)
+	}
+}
+
+func generateTestSignedCert(t *testing.T, host string, serial int64, caCert *x509.Certificate, caKey *ecdsa.PrivateKey, certPath, keyPath string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := x509.Certificate{
+		SerialNumber:          big.NewInt(serial),
+		Subject:               pkix.Name{CommonName: host},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		DNSNames:              []string{host},
+		BasicConstraintsValid: true,
+		IsCA:                  false,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create signed cert: %v", err)
+	}
+	writeTestPEM(t, certPath, "CERTIFICATE", der)
+	kb, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	writeTestPEM(t, keyPath, "EC PRIVATE KEY", kb)
 }
 
 func TestCertManager_SelfSigned(t *testing.T) {
@@ -77,6 +128,19 @@ func TestCertManager_SelfSigned(t *testing.T) {
 	if _, err := os.Stat(keyPath); err != nil {
 		t.Errorf("expected selfsigned.key to exist, got: %v", err)
 	}
+	parsed, err := x509.ParseCertificate(cur.Certificate[0])
+	if err != nil {
+		t.Fatalf("parse generated certificate: %v", err)
+	}
+	if got := parsed.Issuer.CommonName; got != "nasconn+ Local CA" {
+		t.Errorf("expected leaf issued by local CA, got CN %q", got)
+	}
+	if err := parsed.CheckSignatureFrom(parsed); err == nil {
+		t.Error("generated leaf must not be self-signed")
+	}
+	if _, err := os.Stat(filepath.Join(tempDir, "nasconnplus-local-ca.crt")); err != nil {
+		t.Errorf("expected local CA certificate to exist, got: %v", err)
+	}
 
 	// Second refresh should load the existing cert without errors
 	if err := cm.Refresh(); err != nil {
@@ -96,12 +160,15 @@ func TestCertManager_SelfSignedRotation(t *testing.T) {
 		t.Fatal("expected initial self-signed certificate")
 	}
 
-	// Simulate external rotation overwriting the same filenames.
+	// Simulate external rotation with another leaf issued by the managed CA.
 	time.Sleep(10 * time.Millisecond)
-	generateTestCert(t, "nas.home.local", 9999,
+	ca, err := loadOrCreateLocalCA(tempDir)
+	if err != nil {
+		t.Fatalf("load managed CA: %v", err)
+	}
+	generateTestSignedCert(t, "nas.home.local", 9999, ca.cert, ca.key,
 		filepath.Join(tempDir, "selfsigned.crt"),
 		filepath.Join(tempDir, "selfsigned.key"))
-
 	if err := cm.Refresh(); err != nil {
 		t.Fatalf("second refresh failed: %v", err)
 	}
@@ -109,7 +176,10 @@ func TestCertManager_SelfSignedRotation(t *testing.T) {
 	if cert2 == nil || len(cert2.Certificate) == 0 {
 		t.Fatal("expected rotated certificate")
 	}
-	x509Cert2, _ := x509.ParseCertificate(cert2.Certificate[0])
+	x509Cert2, parseErr := x509.ParseCertificate(cert2.Certificate[0])
+	if parseErr != nil {
+		t.Fatalf("parse rotated certificate: %v", parseErr)
+	}
 	if x509Cert2.SerialNumber.Int64() != 9999 {
 		t.Errorf("self-signed rotation not picked up: still serving old cert (P0-2 regression)")
 	}
@@ -153,6 +223,74 @@ func TestCertManager_ACMECacheInitErrorSurfaces(t *testing.T) {
 	}
 	if err := cm.ACMEInitError(); err == nil || !strings.Contains(err.Error(), "initialize ACME cache") {
 		t.Fatalf("expected persisted ACME initialization error, got %v", err)
+	}
+}
+
+func TestManager_LocalCATrustLifecycle(t *testing.T) {
+	tempDir := t.TempDir()
+	ca, err := loadOrCreateLocalCA(tempDir)
+	if err != nil {
+		t.Fatalf("create local CA: %v", err)
+	}
+
+	cm := NewManager("", "nas.local", tempDir, true, false, "", "", "")
+	if cm.AutoTrustEnabled() {
+		t.Fatal("auto trust must be opt-in for library callers")
+	}
+	cm.SetAutoTrust(true)
+
+	probeCalls, installCalls := 0, 0
+	originalProbe, originalInstall := localCATrustProbe, localCATrustInstall
+	t.Cleanup(func() {
+		localCATrustProbe = originalProbe
+		localCATrustInstall = originalInstall
+	})
+	localCATrustProbe = func(string) (bool, error) {
+		probeCalls++
+		return false, nil
+	}
+	localCATrustInstall = func(string) error {
+		installCalls++
+		return nil
+	}
+
+	if err := cm.ensureLocalCATrusted(ca.certPath); err != nil {
+		t.Fatalf("install local CA: %v", err)
+	}
+	if !cm.LocalCATrusted() {
+		t.Error("expected manager to record installed local CA")
+	}
+
+	if err := cm.ensureLocalCATrusted(ca.certPath); err != nil {
+		t.Fatalf("reuse trusted local CA: %v", err)
+	}
+	if probeCalls != 1 || installCalls != 1 {
+		t.Fatalf("expected one probe/install, got probe=%d install=%d", probeCalls, installCalls)
+	}
+}
+
+func TestManager_LocalCATrustFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	ca, err := loadOrCreateLocalCA(tempDir)
+	if err != nil {
+		t.Fatalf("create local CA: %v", err)
+	}
+	cm := NewManager("", "nas.local", tempDir, true, false, "", "", "")
+	cm.SetAutoTrust(true)
+
+	originalProbe, originalInstall := localCATrustProbe, localCATrustInstall
+	t.Cleanup(func() {
+		localCATrustProbe = originalProbe
+		localCATrustInstall = originalInstall
+	})
+	localCATrustProbe = func(string) (bool, error) { return false, nil }
+	localCATrustInstall = func(string) error { return errors.New("trust store unavailable") }
+
+	if err := cm.ensureLocalCATrusted(ca.certPath); err == nil {
+		t.Fatal("expected trust installation failure")
+	}
+	if cm.LocalCATrusted() {
+		t.Error("failed local CA installation must not be recorded as trusted")
 	}
 }
 

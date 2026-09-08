@@ -85,7 +85,7 @@ Every poll cycle the daemon scans local listeners (`/proc/net/tcp{,6}` on Linux,
 - 🔐 **3-Tier Resilient Certificate Engine**:
   1. Automated Let's Encrypt issuance via ACME (`autocert`, TLS-ALPN-01 — requires port 443 to reach the target listener).
   2. Dynamic reloading of custom external PEM certificates (SHA-256 content fingerprinting, so in-place renewals apply without restart).
-  3. Built-in ECDSA P-256 825-day self-signed certificate generation as a dependable fallback (also reloaded when rotated on disk).
+  3. Built-in ECDSA P-256 fallback with a persistent 10-year local CA and 825-day server certificate (the CA can be auto-installed into the OS trust store; rotated leaf certificates reload without restart).
 - 🎨 **Modern Geek Ergonomics**: Stylized CLI and ASCII banners powered by `charmbracelet/lipgloss`. A one-shot diagnostic mode (`-t`) prints formatted terminal tables with color-coded status badges, reflecting the actual loaded configuration.
 - 🛡️ **Defensive Security Baseline**: Union-merged exclusion lists protecting 19 high-risk infrastructure ports (see [Security](#security)), optional explicit whitelists, per-listener connection limits, loopback-only debug endpoint, `0600` IPC socket, and RFC 6797-compliant HSTS policy enforcement.
 
@@ -255,7 +255,8 @@ Valid JSON only — this project uses `_comment` keys for annotations because st
 | `socket_path` | String | Auto | no `..` | Unix Domain Socket path. Auto: `$XDG_RUNTIME_DIR/nasconnplus.sock`, else `/run/nasconnplus.sock` (root), else per-UID isolated dir |
 | `acme` | Object | Disabled | `enabled` requires `domain` | `{"enabled": true, "domain": "nas.example.com", "email": "admin@example.com"}`. TLS-ALPN-01 only: port 443 must reach the target listener |
 | `cert_config_path` | String | `""` | no `..` | External JSON file with custom TLS certificate pairs (content-hash reloaded) |
-| `selfsigned_dir` | String | `/etc/nasconnplus/tls` | no `..` | Storage for the generated self-signed certificate |
+| `auto_trust_local_ca` | Boolean | `true` | — | Install the generated local CA into the macOS login keychain or Linux system CA store so fallback HTTPS is trusted without manual imports. Set `false` for sandbox/test environments |
+| `selfsigned_dir` | String | `/etc/nasconnplus/tls` | no `..` | Storage for the local CA and generated fallback certificate |
 
 ---
 

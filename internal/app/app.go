@@ -171,6 +171,7 @@ func Run() {
 		cfg.ACME.Email,
 		cfg.ACME.CacheDir,
 	)
+	cm.SetAutoTrust(cfg.AutoTrustLocalCA != nil && *cfg.AutoTrustLocalCA)
 	if err := cm.Refresh(); err != nil {
 		log.Warn("Certificate initialization: %v", err)
 	} else {
@@ -181,6 +182,11 @@ func Run() {
 			log.Info("TLS certificate ready (ACME enabled for %s)", cfg.ACME.Domain)
 		} else {
 			log.Info("TLS certificate loaded successfully (Host: %s)", cfg.CertHost)
+		}
+		if trustErr := cm.LocalCATrustError(); trustErr != nil {
+			log.Warn("Local CA trust setup: %v", trustErr)
+		} else if cm.AutoTrustEnabled() && cm.LocalCATrusted() {
+			log.Info("Local CA auto-trust enabled")
 		}
 	}
 

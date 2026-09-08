@@ -77,6 +77,7 @@ func TestApp_Run_FullCycle(t *testing.T) {
 
 	cfg := `{
 		"cert_host": "localhost",
+		"auto_trust_local_ca": false,
 		"self_dir": "` + tempDir + `",
 		"socket_path": "` + sockPath + `",
 		"poll_seconds": 1,
@@ -136,6 +137,7 @@ func TestApp_Run_DebugNonLoopbackRefused(t *testing.T) {
 
 	cfg := `{
 		"cert_host": "localhost",
+		"auto_trust_local_ca": false,
 		"self_dir": "` + tempDir + `",
 		"socket_path": "` + sockPath + `",
 		"poll_seconds": 1,
@@ -176,6 +178,7 @@ func TestApp_Run_OverrideWarn(t *testing.T) {
 
 	cfg := `{
 		"cert_host": "localhost",
+		"auto_trust_local_ca": false,
 		"self_dir": "` + tempDir + `",
 		"socket_path": "` + sockPath + `",
 		"poll_seconds": 1,
@@ -212,6 +215,7 @@ func TestApp_Run_DebugPprof(t *testing.T) {
 
 	cfg := `{
 		"cert_host": "localhost",
+		"auto_trust_local_ca": false,
 		"self_dir": "` + tempDir + `",
 		"socket_path": "` + sockPath + `",
 		"poll_seconds": 1,
@@ -259,4 +263,3 @@ func TestApp_Run_DebugPprof(t *testing.T) {
 
 	Run()
 }
-
