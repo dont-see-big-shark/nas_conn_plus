@@ -1,11 +1,11 @@
 module github.com/dont-see-big-shark/nas_conn_plus
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/inetaf/tcpproxy v0.0.0-20260515195445-c159a6051109
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 )
 
 require (
